@@ -11,6 +11,23 @@ from typing import List, Dict, Optional
 from pathlib import Path
 
 
+# Backward compatibility alias
+def generate_explanation_html(results: List[Dict],
+                             query_path: str,
+                             output_file: str = "explanation.html") -> str:
+    """Alias for generate_html_visualization (backward compatibility)
+    
+    Args:
+        results: List of search results with explanation field
+        query_path: Path to query file
+        output_file: Output HTML file path
+        
+    Returns:
+        html_content: Generated HTML as string
+    """
+    return generate_html_visualization(results, query_path, output_file)
+
+
 def generate_html_visualization(results: List[Dict],
                                 query_path: str,
                                 output_file: str = "explanation.html") -> str:

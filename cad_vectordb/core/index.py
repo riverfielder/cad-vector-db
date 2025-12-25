@@ -426,6 +426,14 @@ class IndexManager:
         """
         if not self.index_dir.exists():
             return []
+    
+    def list_available_indices(self) -> List[str]:
+        """Alias for list_available_indexes (backward compatibility)
+        
+        Returns:
+            index_names: List of index names
+        """
+        return self.list_available_indexes()
         
         indexes = []
         for subdir in self.index_dir.iterdir():

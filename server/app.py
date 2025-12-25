@@ -241,6 +241,7 @@ async def root():
         "message": "CAD Vector Database API",
         "version": "1.0.0",
         "endpoints": [
+            "/health",
             "/search",
             "/search/semantic",
             "/search/hybrid",
@@ -258,8 +259,36 @@ async def root():
             "/index/snapshot",
             "/index/snapshots",
             "/index/snapshot/{snapshot_name}/restore",
-            "/index/changelog"
+            "/index/changelog",
+            "/health"
         ]
+    }
+
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    global index_manager
+    
+    index_loaded = False
+    index_status = "not_initialized"
+    num_vectors = 0
+    
+    if index_manager is not None:
+        if index_manager.faiss_index is not None:
+            index_loaded = True
+            index_status = "loaded"
+            num_vectors = index_manager.faiss_index.ntotal
+        else:
+            index_status = "initialized_but_not_loaded"
+    
+    return {
+        "status": "healthy" if index_loaded else "degraded",
+        "service": "CAD Vector Database API",
+        "index_loaded": index_loaded,
+        "index_status": index_status,
+        "num_vectors": num_vectors,
+        "timestamp": time.time()
     }
 
 
@@ -344,16 +373,47 @@ async def search(req: SearchRequest, request: Request):
 @app.get("/stats", response_model=StatsResponse)
 async def get_stats():
     """Get database statistics"""
-    if index_manager is None:
-        raise HTTPException(status_code=503, detail="Index not loaded")
+    global index_manager
     
-    # Load config
-    config_path = os.path.join(INDEX_DIR, 'config.json')
-    with open(config_path, 'r') as f:
-        config_data = json.load(f)
+    # Check if index manager exists
+    if index_manager is None:
+        raise HTTPException(
+            status_code=503, 
+            detail="Index manager not initialized. Please check server configuration."
+        )
+    
+    # Try to load index if not loaded
+    if index_manager.faiss_index is None:
+        try:
+            api_logger.info("Index not loaded, attempting to load...")
+            index_manager.load_index()
+        except Exception as e:
+            api_logger.error(f"Failed to load index: {e}")
+            raise HTTPException(
+                status_code=503,
+                detail=f"Index not loaded and failed to auto-load: {str(e)}"
+            )
+    
+    # Load config with error handling
+    try:
+        config_path = os.path.join(INDEX_DIR, 'config.json')
+        if not os.path.exists(config_path):
+            # Return basic stats without config
+            return {
+                "total_vectors": len(index_manager.ids) if hasattr(index_manager, 'ids') else 0,
+                "index_type": "unknown",
+                "feature_dim": 32,
+                "index_params": {}
+            }
+        
+        with open(config_path, 'r') as f:
+            config_data = json.load(f)
+    except Exception as e:
+        api_logger.warning(f"Failed to load config.json: {e}")
+        config_data = {}
     
     return {
-        "total_vectors": len(index_manager.ids),
+        "total_vectors": len(index_manager.ids) if hasattr(index_manager, 'ids') else 0,
         "index_type": config_data.get('index_type', 'unknown'),
         "feature_dim": config_data.get('feature_dim', 32),
         "index_params": {

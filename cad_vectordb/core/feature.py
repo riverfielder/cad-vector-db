@@ -31,6 +31,26 @@ def load_macro_vec(h5_path):
     return vec.astype('float32')
 
 
+def extract_feature_from_h5(h5_path: str) -> np.ndarray:
+    """Extract feature from H5 file (convenience wrapper)
+    
+    This is a convenience function that combines load_macro_vec and extract_feature.
+    Useful for backward compatibility and simpler API.
+    
+    Args:
+        h5_path: Path to .h5 file
+        
+    Returns:
+        feat: (32,) float32 feature vector, or None if file cannot be loaded
+    """
+    try:
+        vec = load_macro_vec(h5_path)
+        return extract_feature(vec) if vec is not None else None
+    except Exception as e:
+        print(f"Error extracting feature from {h5_path}: {e}")
+        return None
+
+
 def batch_extract_features(vectors):
     """Extract features from multiple vectors
     
