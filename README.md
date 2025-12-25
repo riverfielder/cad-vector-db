@@ -1,6 +1,6 @@
 # CAD Vector Database
 
-面向 3D 深度学习的向量数据库系统，基于 WHUCAD 数据集实现高效的 CAD 模型相似性检索。
+面向 3D 深度学习的向量数据库系统，基于 CAD向量数据集实现高效的 CAD 模型相似性检索。
 
 [![Python](https://img.shields.io/badge/python-3.7+-blue.svg)](https://www.python.org/downloads/)
 [![FAISS](https://img.shields.io/badge/FAISS-1.7+-green.svg)](https://github.com/facebookresearch/faiss)
@@ -516,7 +516,6 @@ MIT License - 详见 [LICENSE](LICENSE) 文件
 
 ## 相关资源
 
-- [WHUCAD 数据集](https://github.com/user/WHUCAD-main)
 - [FAISS Wiki](https://github.com/facebookresearch/faiss/wiki)
 - [FastAPI 文档](https://fastapi.tiangolo.com/)
 - [OceanBase 文档](https://www.oceanbase.com/docs)

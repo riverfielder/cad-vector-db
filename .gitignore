@@ -33,12 +33,12 @@ server.log
 explanation.html
 *.html
 
-# Data files (大文件不提交到git)
-data/vec/**/*.h5
-data/index*/
+# Data files - 现在包含所有数据文件
+# 排除临时索引和数据库文件
+data/index_test*/
 data/*.db
 data/*.sqlite
 
-# 保留必要的配置文件
+# 保留必要的文件
 !data/*.json
 !data/README.md
