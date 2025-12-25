@@ -50,7 +50,7 @@ manager.load_index("default")
 benchmark = SearchBenchmark(manager)
 
 # 3. 准备查询文件
-query_dir = Path("../WHUCAD-main/data/vec/0000")
+query_dir = Path("../data/vec/0000")
 query_paths = [str(f) for f in query_dir.glob("*.h5")][:100]
 
 # 4. 运行完整基准测试
@@ -125,7 +125,7 @@ for k, stats in k_stats['results'].items():
 python -m benchmarks.benchmark_search \
     --index-dir ./data/indexes \
     --index-name default \
-    --query-dir ../WHUCAD-main/data/vec/0000 \
+    --query-dir ../data/vec/0000 \
     --num-queries 100 \
     --output benchmark_results.json
 ```

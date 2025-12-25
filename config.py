@@ -1,8 +1,10 @@
 """Configuration for CAD Vector Database"""
 import os
+from pathlib import Path
 
-# Paths
-WHUCAD_DATA_ROOT = "/Users/he.tian/bs/WHUCAD-main/data/vec"
+# Paths (使用项目内部数据)
+PROJECT_ROOT = Path(__file__).parent
+WHUCAD_DATA_ROOT = str(PROJECT_ROOT / "data" / "vec")
 INDEX_DIR = "data/index_test"  # Use test index (500 samples)
 METADATA_DB_PATH = "data/metadata.db"
 

@@ -64,7 +64,7 @@ curl http://127.0.0.1:8000/stats
 curl -X POST "http://127.0.0.1:8000/search" \
   -H "Content-Type: application/json" \
   -d '{
-    "query_file_path": "/Users/he.tian/bs/WHUCAD-main/data/vec/0000/00000001.h5",
+    "query_file_path": "data/vec/0000/00000001.h5",
     "k": 5,
     "stage1_topn": 20,
     "fusion_method": "weighted"
@@ -81,7 +81,7 @@ curl -X POST "http://127.0.0.1:8000/search" \
         "sim_stage2": 1.0,
         "metadata": {
             "id": "0000/00000001.h5",
-            "file_path": "/Users/he.tian/bs/WHUCAD-main/data/vec/0000/00000001.h5",
+            "file_path": "data/vec/0000/00000001.h5",
             "subset": "0000",
             "seq_len": 20
         }
@@ -93,7 +93,7 @@ curl -X POST "http://127.0.0.1:8000/search" \
         "sim_stage2": 0.001965198403225878,
         "metadata": {
             "id": "0000/00000235.h5",
-            "file_path": "/Users/he.tian/bs/WHUCAD-main/data/vec/0000/00000235.h5",
+            "file_path": "data/vec/0000/00000235.h5",
             "subset": "0000",
             "seq_len": 29
         }
@@ -105,7 +105,7 @@ curl -X POST "http://127.0.0.1:8000/search" \
         "sim_stage2": 0.0015700888775864329,
         "metadata": {
             "id": "0000/00000491.h5",
-            "file_path": "/Users/he.tian/bs/WHUCAD-main/data/vec/0000/00000491.h5",
+            "file_path": "data/vec/0000/00000491.h5",
             "subset": "0000",
             "seq_len": 14
         }
@@ -117,7 +117,7 @@ curl -X POST "http://127.0.0.1:8000/search" \
         "sim_stage2": 0.0019009111646284466,
         "metadata": {
             "id": "0000/00000340.h5",
-            "file_path": "/Users/he.tian/bs/WHUCAD-main/data/vec/0000/00000340.h5",
+            "file_path": "data/vec/0000/00000340.h5",
             "subset": "0000",
             "seq_len": 22
         }
@@ -129,7 +129,7 @@ curl -X POST "http://127.0.0.1:8000/search" \
         "sim_stage2": 0.0008997010142934698,
         "metadata": {
             "id": "0000/00000109.h5",
-            "file_path": "/Users/he.tian/bs/WHUCAD-main/data/vec/0000/00000109.h5",
+            "file_path": "data/vec/0000/00000109.h5",
             "subset": "0000",
             "seq_len": 15
         }
@@ -158,7 +158,7 @@ curl -X POST "http://127.0.0.1:8000/search" \
 curl -X POST http://127.0.0.1:8000/search \
   -H "Content-Type: application/json" \
   -d '{
-    "query_file_path": "/Users/he.tian/bs/WHUCAD-main/data/vec/0000/00000000.h5",
+    "query_file_path": "data/vec/0000/00000000.h5",
     "k": 5,
     "stage1_topn": 50,
     "filters": {
@@ -193,7 +193,7 @@ curl -X POST http://127.0.0.1:8000/search \
 curl -X POST http://127.0.0.1:8000/search \
   -H "Content-Type: application/json" \
   -d '{
-    "query_file_path": "/Users/he.tian/bs/WHUCAD-main/data/vec/0000/00000000.h5",
+    "query_file_path": "data/vec/0000/00000000.h5",
     "k": 5,
     "stage1_topn": 50,
     "filters": {
@@ -335,7 +335,7 @@ print(f"Index type: {stats['index_type']}")
 
 # 2. 搜索相似向量
 search_request = {
-    "query_file_path": "/Users/he.tian/bs/WHUCAD-main/data/vec/0000/00000001.h5",
+    "query_file_path": "data/vec/0000/00000001.h5",
     "k": 10,
     "stage1_topn": 50,
     "fusion_method": "weighted",
@@ -366,7 +366,7 @@ fetch('http://127.0.0.1:8000/search', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
-    query_file_path: '/Users/he.tian/bs/WHUCAD-main/data/vec/0000/00000001.h5',
+    query_file_path: 'data/vec/0000/00000001.h5',
     k: 5,
     fusion_method: 'weighted'
   })

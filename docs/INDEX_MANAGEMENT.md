@@ -46,7 +46,7 @@ manager = IndexManager(index_dir="./data/indexes")
 ```python
 # 从数据目录构建索引
 stats = manager.build_index(
-    data_root="../WHUCAD-main/data/vec",
+    data_root="../data/vec",
     index_type="Flat",  # 或 "IVFFlat", "HNSW"
     max_samples=1000,   # 可选：限制样本数
     verbose=True
@@ -287,7 +287,7 @@ manager = IndexManager("./data/indexes")
 
 # 2. 构建索引
 manager.build_index(
-    data_root="../WHUCAD-main/data/vec",
+    data_root="../data/vec",
     index_type="Flat",
     verbose=True
 )

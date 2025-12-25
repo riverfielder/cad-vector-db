@@ -26,7 +26,7 @@ def main():
     
     # 1. Build a new index
     print("\n1. Building new index...")
-    data_root = "../WHUCAD-main/data/vec"
+    data_root = "../data/vec"
     stats = manager.build_index(
         data_root=data_root,
         index_type="Flat",

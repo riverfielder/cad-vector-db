@@ -27,7 +27,7 @@ class PathConfig:
     """Path configuration"""
     whucad_data_root: str = field(default_factory=lambda: os.getenv(
         'WHUCAD_DATA_ROOT',
-        '/Users/he.tian/bs/WHUCAD-main/data/vec'
+        str(Path(__file__).parent.parent.parent / 'data' / 'vec')
     ))
     index_dir: str = field(default_factory=lambda: os.getenv(
         'INDEX_DIR',

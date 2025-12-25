@@ -29,7 +29,7 @@ def main():
     retrieval = TwoStageRetrieval(manager)
     
     # 2. Prepare queries
-    data_dir = Path("../WHUCAD-main/data/vec/0000")
+    data_dir = Path("../data/vec/0000")
     query_paths = sorted([str(f) for f in data_dir.glob("*.h5")])[:50]
     print(f"\n2. Prepared {len(query_paths)} queries")
     

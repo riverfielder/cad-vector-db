@@ -30,7 +30,7 @@ def main():
     retrieval = TwoStageRetrieval(manager)
     
     # 3. Prepare query
-    query_path = "../WHUCAD-main/data/vec/0000/00000000.h5"
+    query_path = "../data/vec/0000/00000000.h5"
     query_vec = load_macro_vec(query_path)
     print(f"\n2. Query: {query_path}")
     print(f"   Sequence length: {len(query_vec)}")

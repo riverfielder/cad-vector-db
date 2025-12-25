@@ -75,7 +75,7 @@ POST /search
 curl -X POST http://127.0.0.1:8000/search \
   -H "Content-Type: application/json" \
   -d '{
-    "query_file_path": "/Users/he.tian/bs/WHUCAD-main/data/vec/0000/00000000.h5",
+    "query_file_path": "data/vec/0000/00000000.h5",
     "k": 5,
     "stage1_topn": 50,
     "filters": {
@@ -108,7 +108,7 @@ curl -X POST http://127.0.0.1:8000/search \
 curl -X POST http://127.0.0.1:8000/search \
   -H "Content-Type: application/json" \
   -d '{
-    "query_file_path": "/Users/he.tian/bs/WHUCAD-main/data/vec/0000/00000000.h5",
+    "query_file_path": "data/vec/0000/00000000.h5",
     "k": 5,
     "stage1_topn": 50,
     "filters": {

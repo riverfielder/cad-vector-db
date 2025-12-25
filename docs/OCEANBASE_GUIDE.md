@@ -25,7 +25,7 @@ docker logs -f oceanbase-ce
 ## 2. 安装 Python 依赖
 
 ```bash
-cd /Users/he.tian/bs/db
+cd .
 source .venv/bin/activate
 pip install pymysql
 # 或者重新安装所有依赖

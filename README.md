@@ -54,13 +54,15 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+**注意**: 项目已包含测试数据（data/vec目录下的0000-0002子集，约4257个CAD模型）。数据文件由于体积较大不在git中，需要手动添加或使用提供的测试数据。
+
 ### 2️⃣ 构建索引
 
 ```bash
-# 快速测试（500 样本）
-python scripts/build_index.py --max_samples 500 --output_dir data/index_test
+# 快速测试（100样本，用于开发测试）
+python scripts/build_index.py --max_samples 100 --output_dir data/index_test
 
-# 全量索引
+# 使用当前所有数据（约4257个模型）
 python scripts/build_index.py --output_dir data/index_full
 ```
 
@@ -68,7 +70,7 @@ python scripts/build_index.py --output_dir data/index_full
 
 ```bash
 python server/app.py
-# 访问 http://localhost:8123/docs 查看交互式文档
+# 访问 http://localhost:8000/docs 查看交互式文档
 ```
 
 ### 4️⃣ 检索示例

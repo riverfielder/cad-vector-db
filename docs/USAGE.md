@@ -5,7 +5,7 @@
 ### 0. 环境准备
 
 ```bash
-cd /Users/he.tian/bs/db
+cd .
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -33,7 +33,7 @@ python scripts/build_index.py --output_dir data/index_full
 # 单次查询测试
 python scripts/retrieval.py \
   --index_dir data/index \
-  --query_file /Users/he.tian/bs/WHUCAD-main/data/vec/0000/00000001.h5 \
+  --query_file data/vec/0000/00000001.h5 \
   --topn 100 \
   --topk 20 \
   --fusion weighted
@@ -57,7 +57,7 @@ cd server && uvicorn app:app --host 127.0.0.1 --port 8000
 curl -X POST "http://127.0.0.1:8000/search" \
   -H "Content-Type: application/json" \
   -d '{
-    "query_file_path": "/Users/he.tian/bs/WHUCAD-main/data/vec/0000/00000001.h5",
+    "query_file_path": "data/vec/0000/00000001.h5",
     "k": 20,
     "stage1_topn": 100,
     "fusion_method": "weighted",
