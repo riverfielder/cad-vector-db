@@ -2,21 +2,54 @@
 import os
 import sys
 import json
+import time
+import uuid
 from pathlib import Path
 from typing import Optional, List, Dict
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Depends
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from config import *
+
+# Load environment variables first
+from cad_vectordb.utils.env import load_env
+load_env()
+
+# Import new utils
+from cad_vectordb.utils.config import get_config
+from cad_vectordb.utils.logger import get_logger, api_logger
+from cad_vectordb.utils.security import (
+    require_auth, rate_limit, generate_request_id,
+    PathValidator, InputValidator
+)
+
+# Import core modules
 from cad_vectordb.core.index import IndexManager
 from cad_vectordb.core.retrieval import TwoStageRetrieval
 from cad_vectordb.core.feature import extract_feature, load_macro_vec
 from cad_vectordb.core.text_encoder import create_text_encoder
 
+# Get configuration
+config = get_config()
+
 # Initialize FastAPI
-app = FastAPI(title="CAD Vector Database API", version="1.0.0")
+app = FastAPI(
+    title="CAD Vector Database API",
+    version="2.0.0",
+    description="Production-ready vector database for CAD model retrieval"
+)
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=config.server.allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Global state
 index_manager = None
@@ -115,15 +148,91 @@ class StatsResponse(BaseModel):
     index_params: Dict
 
 
+# Request logging middleware
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """Log all HTTP requests with timing"""
+    request_id = generate_request_id()
+    start_time = time.time()
+    
+    # Add request ID to state
+    request.state.request_id = request_id
+    
+    # Log request
+    api_logger.info(
+        f"Request started: {request.method} {request.url.path}",
+        extra={
+            'request_id': request_id,
+            'extra_data': {
+                'method': request.method,
+                'path': request.url.path,
+                'client_ip': request.client.host if request.client else None
+            }
+        }
+    )
+    
+    try:
+        response = await call_next(request)
+        duration_ms = (time.time() - start_time) * 1000
+        
+        # Log response
+        api_logger.info(
+            f"Request completed: {request.method} {request.url.path}",
+            extra={
+                'request_id': request_id,
+                'duration_ms': duration_ms,
+                'extra_data': {
+                    'status_code': response.status_code
+                }
+            }
+        )
+        
+        # Add headers
+        response.headers["X-Request-ID"] = request_id
+        response.headers["X-Process-Time"] = f"{duration_ms:.2f}ms"
+        
+        return response
+    
+    except Exception as e:
+        duration_ms = (time.time() - start_time) * 1000
+        api_logger.error(
+            f"Request failed: {request.method} {request.url.path}",
+            exc_info=True,
+            extra={
+                'request_id': request_id,
+                'duration_ms': duration_ms
+            }
+        )
+        raise
+
+
 @app.on_event("startup")
 async def startup_event():
     """Load index on startup"""
     global index_manager, retrieval_system
-    print("Loading FAISS index...")
-    index_manager = IndexManager(INDEX_DIR)
-    index_manager.load_index()
-    retrieval_system = TwoStageRetrieval(index_manager)
-    print(f"Loaded {len(index_manager.ids)} vectors")
+    
+    api_logger.info("Starting CAD Vector Database API server")
+    api_logger.info(f"Environment: {config.env.value}")
+    api_logger.info(f"Loading index from: {config.paths.index_dir}")
+    
+    try:
+        index_manager = IndexManager(config.paths.index_dir, verbose=False)
+        index_manager.load_index()
+        retrieval_system = TwoStageRetrieval(index_manager)
+        
+        api_logger.info(
+            f"Index loaded successfully: {len(index_manager.ids)} vectors",
+            extra={'extra_data': {'num_vectors': len(index_manager.ids)}}
+        )
+    except Exception as e:
+        api_logger.error("Failed to load index", exc_info=True)
+        raise
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown"""
+    api_logger.info("Shutting down CAD Vector Database API server")
 
 
 @app.get("/")
@@ -155,19 +264,51 @@ async def root():
 
 
 @app.post("/search")
-async def search(req: SearchRequest):
+@rate_limit
+async def search(req: SearchRequest, request: Request):
     """Two-stage search with fusion and optional metadata filtering (Hybrid Search)
     
     With explainable=true, returns detailed similarity breakdown and interpretations
     """
+    request_id = getattr(request.state, 'request_id', 'unknown')
+    
     if retrieval_system is None:
+        api_logger.error("Search failed: index not loaded", extra={'request_id': request_id})
         raise HTTPException(status_code=503, detail="Index not loaded")
     
-    # Validate query file
+    # Validate file path
+    if not PathValidator.is_safe_path(config.paths.whucad_data_root, req.query_file_path):
+        api_logger.warning(
+            f"Unsafe path detected: {req.query_file_path}",
+            extra={'request_id': request_id}
+        )
+        raise HTTPException(status_code=400, detail="Invalid file path")
+    
+    # Validate query file exists
     if not os.path.exists(req.query_file_path):
+        api_logger.warning(
+            f"File not found: {req.query_file_path}",
+            extra={'request_id': request_id}
+        )
         raise HTTPException(status_code=404, detail=f"Query file not found: {req.query_file_path}")
     
+    # Validate k value
+    if not InputValidator.validate_k_value(req.k):
+        raise HTTPException(status_code=400, detail="Invalid k value (must be 1-1000)")
+    
     try:
+        api_logger.info(
+            f"Search request: k={req.k}, method={req.fusion_method}",
+            extra={
+                'request_id': request_id,
+                'extra_data': {
+                    'k': req.k,
+                    'fusion_method': req.fusion_method,
+                    'explainable': req.explainable
+                }
+            }
+        )
+        
         # Extract query feature
         query_vec = load_macro_vec(req.query_file_path)
         query_feat = extract_feature(query_vec)
@@ -181,9 +322,22 @@ async def search(req: SearchRequest):
             explainable=req.explainable  # Enable explainable retrieval
         )
         
+        api_logger.info(
+            f"Search completed: {len(results)} results",
+            extra={
+                'request_id': request_id,
+                'extra_data': {'num_results': len(results)}
+            }
+        )
+        
         return results
         
     except Exception as e:
+        api_logger.error(
+            f"Search error: {str(e)}",
+            exc_info=True,
+            extra={'request_id': request_id}
+        )
         raise HTTPException(status_code=500, detail=f"Search error: {str(e)}")
 
 
