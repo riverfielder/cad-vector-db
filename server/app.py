@@ -69,6 +69,37 @@ class HybridSearchRequest(BaseModel):
     filters: Optional[Dict] = None
 
 
+class AddVectorRequest(BaseModel):
+    """Add vector request model"""
+    id_str: str
+    h5_path: str
+
+
+class UpdateVectorRequest(BaseModel):
+    """Update vector request model"""
+    h5_path: str
+
+
+class BatchUpdateRequest(BaseModel):
+    """Batch update request model"""
+    updates: List[Dict[str, str]]  # List of {id_str, h5_path} dicts
+
+
+class SoftDeleteRequest(BaseModel):
+    """Soft delete request model"""
+    ids: List[str]
+
+
+class RestoreRequest(BaseModel):
+    """Restore request model"""
+    ids: List[str]
+
+
+class CreateSnapshotRequest(BaseModel):
+    """Create snapshot request model"""
+    name: Optional[str] = None
+
+
 class SearchResult(BaseModel):
     id: str
     score: float
@@ -107,7 +138,18 @@ async def root():
             "/search/batch",
             "/search/visualize",
             "/stats",
-            "/vectors/{id}"
+            "/vectors/{id}",
+            "/vectors/add",
+            "/vectors/{vector_id}",
+            "/vectors/batch-update",
+            "/vectors/soft",
+            "/vectors/restore",
+            "/vectors/deleted",
+            "/index/compact",
+            "/index/snapshot",
+            "/index/snapshots",
+            "/index/snapshot/{snapshot_name}/restore",
+            "/index/changelog"
         ]
     }
 
@@ -440,6 +482,200 @@ async def hybrid_search(req: HybridSearchRequest):
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Hybrid search error: {str(e)}")
+
+
+@app.post("/vectors/add")
+async def add_vector(req: AddVectorRequest):
+    """
+    Add a new vector to the index
+    
+    Parameters:
+    - id_str: Unique identifier for the vector
+    - h5_path: Path to the H5 file containing the vector
+    """
+    try:
+        index_manager.add_vectors([(req.id_str, req.h5_path)])
+        return {
+            "status": "success",
+            "message": f"Vector {req.id_str} added successfully"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Add vector error: {str(e)}")
+
+
+@app.put("/vectors/{vector_id}")
+async def update_vector(vector_id: str, req: UpdateVectorRequest):
+    """
+    Update an existing vector
+    
+    Parameters:
+    - vector_id: ID of the vector to update
+    - h5_path: Path to the H5 file containing the new vector
+    """
+    try:
+        index_manager.update_vector(vector_id, req.h5_path)
+        return {
+            "status": "success",
+            "message": f"Vector {vector_id} updated successfully"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Update vector error: {str(e)}")
+
+
+@app.post("/vectors/batch-update")
+async def batch_update(req: BatchUpdateRequest):
+    """
+    Batch update multiple vectors
+    
+    Parameters:
+    - updates: List of update operations, each with id_str and h5_path
+    """
+    try:
+        index_manager.batch_update(req.updates)
+        return {
+            "status": "success",
+            "message": f"{len(req.updates)} vectors updated successfully"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Batch update error: {str(e)}")
+
+
+@app.delete("/vectors/soft")
+async def soft_delete(req: SoftDeleteRequest):
+    """
+    Soft delete vectors (mark as deleted without removing from index)
+    
+    Parameters:
+    - ids: List of vector IDs to soft delete
+    """
+    try:
+        index_manager.soft_delete(req.ids)
+        return {
+            "status": "success",
+            "message": f"{len(req.ids)} vectors soft deleted successfully",
+            "deleted_ids": req.ids
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Soft delete error: {str(e)}")
+
+
+@app.post("/vectors/restore")
+async def restore_vectors(req: RestoreRequest):
+    """
+    Restore soft-deleted vectors
+    
+    Parameters:
+    - ids: List of vector IDs to restore
+    """
+    try:
+        index_manager.restore(req.ids)
+        return {
+            "status": "success",
+            "message": f"{len(req.ids)} vectors restored successfully",
+            "restored_ids": req.ids
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Restore error: {str(e)}")
+
+
+@app.get("/vectors/deleted")
+async def get_deleted_vectors():
+    """Get list of soft-deleted vector IDs"""
+    try:
+        deleted_ids = index_manager.get_deleted_ids()
+        return {
+            "status": "success",
+            "deleted_count": len(deleted_ids),
+            "deleted_ids": list(deleted_ids)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Get deleted IDs error: {str(e)}")
+
+
+@app.post("/index/compact")
+async def compact_index():
+    """
+    Compact the index by permanently removing soft-deleted vectors
+    This will rebuild the index without deleted vectors
+    """
+    try:
+        index_manager.compact_index()
+        return {
+            "status": "success",
+            "message": "Index compacted successfully"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Compact index error: {str(e)}")
+
+
+@app.post("/index/snapshot")
+async def create_snapshot(req: CreateSnapshotRequest):
+    """
+    Create a snapshot of the current index state
+    
+    Parameters:
+    - name: Optional snapshot name (auto-generated if not provided)
+    """
+    try:
+        snapshot_name = index_manager.create_snapshot(req.name)
+        return {
+            "status": "success",
+            "message": "Snapshot created successfully",
+            "snapshot_name": snapshot_name
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Create snapshot error: {str(e)}")
+
+
+@app.get("/index/snapshots")
+async def list_snapshots():
+    """List all available snapshots"""
+    try:
+        snapshots = index_manager.list_snapshots()
+        return {
+            "status": "success",
+            "snapshot_count": len(snapshots),
+            "snapshots": snapshots
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"List snapshots error: {str(e)}")
+
+
+@app.post("/index/snapshot/{snapshot_name}/restore")
+async def restore_snapshot(snapshot_name: str):
+    """
+    Restore the index to a previous snapshot
+    
+    Parameters:
+    - snapshot_name: Name of the snapshot to restore
+    """
+    try:
+        index_manager.restore_snapshot(snapshot_name)
+        return {
+            "status": "success",
+            "message": f"Index restored to snapshot: {snapshot_name}"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Restore snapshot error: {str(e)}")
+
+
+@app.get("/index/changelog")
+async def get_changelog(limit: int = 100):
+    """
+    Get the change log of index operations
+    
+    Parameters:
+    - limit: Maximum number of log entries to return (default: 100)
+    """
+    try:
+        changelog = index_manager.get_change_log(limit)
+        return {
+            "status": "success",
+            "log_count": len(changelog),
+            "changelog": changelog
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Get changelog error: {str(e)}")
 
 
 if __name__ == "__main__":

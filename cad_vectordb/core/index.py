@@ -3,30 +3,35 @@
 Supports:
 - Building FAISS indexes from data
 - Loading and saving indexes
-- Adding/removing vectors dynamically
+- Adding/removing vectors dynamically (incremental updates)
+- Updating existing vectors
 - Index statistics and validation
 - Multiple index management
+- Version control and rollback
 """
 import os
 import json
 import h5py
 import numpy as np
 import faiss
+import shutil
 from pathlib import Path
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Union
 from tqdm import tqdm
+from datetime import datetime
 
 from .feature import extract_feature
 
 
 class IndexManager:
-    """Manages FAISS index creation, loading, and modification"""
+    """Manages FAISS index creation, loading, and modification with incremental updates"""
     
-    def __init__(self, index_dir: str):
+    def __init__(self, index_dir: str, enable_versioning: bool = False):
         """Initialize index manager
         
         Args:
             index_dir: Directory to store index files
+            enable_versioning: Enable index versioning for rollback support
         """
         self.index_dir = Path(index_dir)
         self.index_dir.mkdir(parents=True, exist_ok=True)
@@ -35,6 +40,13 @@ class IndexManager:
         self.ids = []
         self.metadata = []
         self.config = {}
+        self.enable_versioning = enable_versioning
+        
+        # Track deleted IDs (for soft delete)
+        self.deleted_ids = set()
+        
+        # Change log for auditing
+        self.change_log = []
         
     def build_index(self, 
                     data_root: str,
@@ -410,6 +422,364 @@ class IndexManager:
         for i, (id_str, meta) in enumerate(zip(self.ids, self.metadata)):
             if meta['id'] != id_str:
                 issues.append(f"ID mismatch at index {i}: {id_str} != {meta['id']}")
+                break  # Only report first mismatch
+        
+        return {
+            "valid": len(issues) == 0,
+            "num_vectors": len(self.ids),
+            "issues": issues
+        }
+    
+    # ==================== Enhanced Incremental Update Methods ====================
+    
+    def update_vector(self, id_str: str, h5_path: str, verbose: bool = True) -> bool:
+        """Update an existing vector in the index
+        
+        This operation removes the old vector and adds the new one.
+        
+        Args:
+            id_str: ID of the vector to update
+            h5_path: Path to new h5 file
+            verbose: Show progress
+            
+        Returns:
+            success: True if updated successfully
+        """
+        if self.index is None:
+            raise ValueError("No index loaded")
+        
+        # Check if ID exists
+        if id_str not in self.ids:
+            if verbose:
+                print(f"ID {id_str} not found, adding as new vector")
+            return self.add_vectors([h5_path], verbose=verbose) > 0
+        
+        # Remove old vector
+        self.remove_vectors([id_str], rebuild=False)
+        
+        # Add new vector
+        added = self.add_vectors([h5_path], verbose=verbose)
+        
+        # Log change
+        self._log_change("update", id_str, h5_path)
+        
+        if verbose:
+            print(f"✅ Updated vector: {id_str}")
+        
+        return added > 0
+    
+    def batch_update(self, 
+                    updates: List[Tuple[str, str]], 
+                    verbose: bool = True) -> Dict[str, int]:
+        """Batch update multiple vectors
+        
+        Args:
+            updates: List of (id_str, h5_path) tuples
+            verbose: Show progress
+            
+        Returns:
+            stats: Dict with update statistics
+        """
+        if self.index is None:
+            raise ValueError("No index loaded")
+        
+        stats = {"updated": 0, "added": 0, "failed": 0}
+        
+        pbar = tqdm(updates, desc="Batch updating") if verbose else updates
+        for id_str, h5_path in pbar:
+            try:
+                if id_str in self.ids:
+                    if self.update_vector(id_str, h5_path, verbose=False):
+                        stats["updated"] += 1
+                else:
+                    if self.add_vectors([h5_path], verbose=False) > 0:
+                        stats["added"] += 1
+            except Exception as e:
+                stats["failed"] += 1
+                if verbose:
+                    print(f"Failed to update {id_str}: {e}")
+        
+        if verbose:
+            print(f"✅ Batch update complete: {stats}")
+        
+        return stats
+    
+    def soft_delete(self, ids_to_delete: List[str], verbose: bool = True) -> int:
+        """Soft delete vectors (mark as deleted without removing)
+        
+        Soft-deleted vectors are excluded from search results but remain in index.
+        Use compact_index() to permanently remove them.
+        
+        Args:
+            ids_to_delete: List of IDs to soft delete
+            verbose: Show progress
+            
+        Returns:
+            num_deleted: Number of vectors soft deleted
+        """
+        if self.index is None:
+            raise ValueError("No index loaded")
+        
+        count = 0
+        for id_str in ids_to_delete:
+            if id_str in self.ids and id_str not in self.deleted_ids:
+                self.deleted_ids.add(id_str)
+                count += 1
+                self._log_change("soft_delete", id_str)
+        
+        if verbose:
+            print(f"✅ Soft deleted {count} vectors (total deleted: {len(self.deleted_ids)})")
+        
+        return count
+    
+    def restore(self, ids_to_restore: List[str], verbose: bool = True) -> int:
+        """Restore soft-deleted vectors
+        
+        Args:
+            ids_to_restore: List of IDs to restore
+            verbose: Show progress
+            
+        Returns:
+            num_restored: Number of vectors restored
+        """
+        if self.index is None:
+            raise ValueError("No index loaded")
+        
+        count = 0
+        for id_str in ids_to_restore:
+            if id_str in self.deleted_ids:
+                self.deleted_ids.remove(id_str)
+                count += 1
+                self._log_change("restore", id_str)
+        
+        if verbose:
+            print(f"✅ Restored {count} vectors")
+        
+        return count
+    
+    def compact_index(self, verbose: bool = True) -> int:
+        """Permanently remove soft-deleted vectors and compact index
+        
+        This rebuilds the index without deleted vectors.
+        
+        Args:
+            verbose: Show progress
+            
+        Returns:
+            num_removed: Number of vectors permanently removed
+        """
+        if self.index is None:
+            raise ValueError("No index loaded")
+        
+        if len(self.deleted_ids) == 0:
+            if verbose:
+                print("No deleted vectors to compact")
+            return 0
+        
+        # Remove deleted vectors
+        num_removed = self.remove_vectors(list(self.deleted_ids), rebuild=True)
+        self.deleted_ids.clear()
+        
+        if verbose:
+            print(f"✅ Compacted index: removed {num_removed} vectors")
+        
+        return num_removed
+    
+    def create_snapshot(self, snapshot_name: Optional[str] = None) -> str:
+        """Create a snapshot of current index state
+        
+        Args:
+            snapshot_name: Optional name for snapshot (auto-generated if None)
+            
+        Returns:
+            snapshot_path: Path to snapshot directory
+        """
+        if self.index is None:
+            raise ValueError("No index loaded")
+        
+        if snapshot_name is None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            snapshot_name = f"snapshot_{timestamp}"
+        
+        snapshot_dir = self.index_dir / "_snapshots" / snapshot_name
+        snapshot_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Save current state
+        current_name = self.config.get('index_name', 'default')
+        current_dir = self.index_dir / current_name
+        
+        if current_dir.exists():
+            # Copy all files
+            for file in ["faiss_index.bin", "id_map.json", "metadata.json", "config.json"]:
+                src = current_dir / file
+                if src.exists():
+                    shutil.copy2(src, snapshot_dir / file)
+        
+        # Save snapshot metadata
+        snapshot_meta = {
+            "snapshot_name": snapshot_name,
+            "created_at": datetime.now().isoformat(),
+            "num_vectors": len(self.ids),
+            "num_deleted": len(self.deleted_ids)
+        }
+        
+        with open(snapshot_dir / "snapshot_info.json", 'w') as f:
+            json.dump(snapshot_meta, f, indent=2)
+        
+        print(f"✅ Created snapshot: {snapshot_name}")
+        return str(snapshot_dir)
+    
+    def list_snapshots(self) -> List[Dict]:
+        """List all available snapshots
+        
+        Returns:
+            snapshots: List of snapshot info dicts
+        """
+        snapshots_dir = self.index_dir / "_snapshots"
+        if not snapshots_dir.exists():
+            return []
+        
+        snapshots = []
+        for snapshot_dir in sorted(snapshots_dir.iterdir()):
+            if snapshot_dir.is_dir():
+                info_file = snapshot_dir / "snapshot_info.json"
+                if info_file.exists():
+                    with open(info_file, 'r') as f:
+                        info = json.load(f)
+                    info['path'] = str(snapshot_dir)
+                    snapshots.append(info)
+        
+        return snapshots
+    
+    def restore_snapshot(self, snapshot_name: str, verbose: bool = True) -> bool:
+        """Restore index from a snapshot
+        
+        Args:
+            snapshot_name: Name of snapshot to restore
+            verbose: Show progress
+            
+        Returns:
+            success: True if restored successfully
+        """
+        snapshot_dir = self.index_dir / "_snapshots" / snapshot_name
+        
+        if not snapshot_dir.exists():
+            raise ValueError(f"Snapshot {snapshot_name} not found")
+        
+        # Load snapshot
+        index = faiss.read_index(str(snapshot_dir / "faiss_index.bin"))
+        
+        with open(snapshot_dir / "id_map.json", 'r') as f:
+            ids = json.load(f)
+        
+        with open(snapshot_dir / "metadata.json", 'r') as f:
+            metadata = json.load(f)
+        
+        with open(snapshot_dir / "config.json", 'r') as f:
+            config = json.load(f)
+        
+        # Replace current index
+        self.index = index
+        self.ids = ids
+        self.metadata = metadata
+        self.config = config
+        self.deleted_ids.clear()
+        
+        self._log_change("restore_snapshot", snapshot_name)
+        
+        if verbose:
+            print(f"✅ Restored snapshot: {snapshot_name} ({len(ids)} vectors)")
+        
+        return True
+    
+    def get_change_log(self, limit: Optional[int] = None) -> List[Dict]:
+        """Get change log history
+        
+        Args:
+            limit: Maximum number of entries to return (None for all)
+            
+        Returns:
+            log_entries: List of change log dicts
+        """
+        if limit is None:
+            return self.change_log
+        return self.change_log[-limit:]
+    
+    def get_deleted_ids(self) -> List[str]:
+        """Get list of soft-deleted IDs
+        
+        Returns:
+            deleted_ids: List of soft-deleted IDs
+        """
+        return list(self.deleted_ids)
+    
+    def search(self, query_vector: np.ndarray, k: int = 10, 
+               include_deleted: bool = False) -> Tuple[np.ndarray, np.ndarray, List[str]]:
+        """Search index with soft-delete filtering
+        
+        Args:
+            query_vector: Query vector (1, d) or (d,)
+            k: Number of results
+            include_deleted: Include soft-deleted vectors in results
+            
+        Returns:
+            distances: Distance array
+            indices: Index array
+            ids: List of IDs (filtered)
+        """
+        if self.index is None:
+            raise ValueError("No index loaded")
+        
+        if query_vector.ndim == 1:
+            query_vector = query_vector.reshape(1, -1)
+        
+        # Search with extra results to account for deleted vectors
+        search_k = k if include_deleted else min(k * 2, len(self.ids))
+        D, I = self.index.search(query_vector, search_k)
+        
+        if include_deleted or len(self.deleted_ids) == 0:
+            result_ids = [self.ids[i] for i in I[0] if i < len(self.ids)]
+            return D[0], I[0], result_ids[:k]
+        
+        # Filter out deleted vectors
+        filtered_distances = []
+        filtered_indices = []
+        filtered_ids = []
+        
+        for dist, idx in zip(D[0], I[0]):
+            if idx >= len(self.ids):
+                continue
+            id_str = self.ids[idx]
+            if id_str not in self.deleted_ids:
+                filtered_distances.append(dist)
+                filtered_indices.append(idx)
+                filtered_ids.append(id_str)
+                if len(filtered_ids) >= k:
+                    break
+        
+        return (np.array(filtered_distances), 
+                np.array(filtered_indices), 
+                filtered_ids)
+    
+    def _log_change(self, operation: str, target: str, details: str = ""):
+        """Log a change operation
+        
+        Args:
+            operation: Type of operation (add, update, delete, etc.)
+            target: Target ID or name
+            details: Additional details
+        """
+        log_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "operation": operation,
+            "target": target,
+            "details": details
+        }
+        self.change_log.append(log_entry)
+        
+        # Keep only last 1000 entries
+        if len(self.change_log) > 1000:
+            self.change_log = self.change_log[-1000:]
                 break  # Only report first mismatch
         
         return {

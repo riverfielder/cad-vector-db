@@ -22,6 +22,8 @@
 - 融合排序：加权融合/RRF/Borda 三种方法
 - REST API：基于 FastAPI 的检索服务
 - 评估框架：Precision@K, Recall@K, mAP, 延迟指标
+- **语义查询**：自然语言文本检索 CAD 模型（Sentence-BERT/CLIP/BM25）
+- **增量更新**：在线添加/更新/删除向量，无需重建索引 🆕
 
 🚧 **待扩展功能**
 - 元数据数据库：Postgres/OceanBase 集成（用于过滤）
@@ -272,6 +274,76 @@ MIT License
 - 依赖兼容: `faiss-cpu` 兼容性用 conda 或容器解决；固定 Python 版本。
 - 标签不足: 用 `subset/来源` 作为弱标签；小样本人工验证提升可信度。
 - 性能瓶颈: 明确延迟目标（如 p95<100ms）；调 `efSearch/nprobe` 与批量接口；热门缓存。
+
+---
+
+## 增量更新（新功能 🆕）
+
+系统现在支持增量更新，无需重建整个索引：
+
+**核心功能:**
+- ✅ **在线添加/更新/删除**向量
+- ✅ **软删除**机制（可恢复）
+- ✅ **快照与版本控制**（回滚支持）
+- ✅ **变更日志**（审计追踪）
+- ✅ **索引压缩**（永久移除已删除向量）
+
+**快速示例（Python）:**
+```python
+from cad_vectordb.core.index import IndexManager
+
+# 启用版本控制
+index_manager = IndexManager("./data/index", enable_versioning=True)
+index_manager.load_index()
+
+# 添加新向量
+index_manager.add_vectors([("vec_0100", "/path/to/vec_0100.h5")])
+
+# 更新现有向量
+index_manager.update_vector("vec_0001", "/path/to/vec_0001_v2.h5")
+
+# 软删除（可恢复）
+index_manager.soft_delete(["vec_0002", "vec_0003"])
+
+# 创建快照（版本控制）
+index_manager.create_snapshot("before_major_update")
+
+# 恢复快照（回滚）
+index_manager.restore_snapshot("before_major_update")
+
+# 查看变更日志
+changelog = index_manager.get_change_log(limit=50)
+```
+
+**快速示例（REST API）:**
+```bash
+# 添加向量
+curl -X POST http://localhost:8123/vectors/add \
+  -H "Content-Type: application/json" \
+  -d '{"id_str": "vec_0100", "h5_path": "/path/to/vec_0100.h5"}'
+
+# 更新向量
+curl -X PUT http://localhost:8123/vectors/vec_0001 \
+  -H "Content-Type: application/json" \
+  -d '{"h5_path": "/path/to/vec_0001_v2.h5"}'
+
+# 软删除
+curl -X DELETE http://localhost:8123/vectors/soft \
+  -H "Content-Type: application/json" \
+  -d '{"ids": ["vec_0002", "vec_0003"]}'
+
+# 创建快照
+curl -X POST http://localhost:8123/index/snapshot \
+  -H "Content-Type: application/json" \
+  -d '{"name": "before_major_update"}'
+```
+
+**详细文档:**
+- 📖 [增量更新完整指南](docs/INCREMENTAL_UPDATES_GUIDE.md)
+- 💻 [Python 示例](examples/incremental_updates_example.py)
+- 🌐 [REST API 示例](examples/incremental_updates_api_example.py)
+
+---
 
 **快速起步命令（不改仓库文件）**
 - 环境与依赖：
