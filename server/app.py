@@ -10,18 +10,16 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import *
-from scripts.retrieval import (
-    load_index_and_metadata, two_stage_search, load_macro_vec
-)
-from scripts.build_index import extract_feature
+from cad_vectordb.core.index import IndexManager
+from cad_vectordb.core.retrieval import TwoStageRetrieval
+from cad_vectordb.core.feature import extract_feature, load_macro_vec
 
 # Initialize FastAPI
 app = FastAPI(title="CAD Vector Database API", version="1.0.0")
 
 # Global state
-index = None
-ids = None
-metadata = None
+index_manager = None
+retrieval_system = None
 
 
 class SearchRequest(BaseModel):
@@ -67,10 +65,12 @@ class StatsResponse(BaseModel):
 @app.on_event("startup")
 async def startup_event():
     """Load index on startup"""
-    global index, ids, metadata
+    global index_manager, retrieval_system
     print("Loading FAISS index...")
-    index, ids, metadata = load_index_and_metadata(INDEX_DIR)
-    print(f"Loaded {len(ids)} vectors")
+    index_manager = IndexManager(INDEX_DIR)
+    index_manager.load_index()
+    retrieval_system = TwoStageRetrieval(index_manager)
+    print(f"Loaded {len(index_manager.ids)} vectors")
 
 
 @app.get("/")
@@ -88,7 +88,7 @@ async def search(req: SearchRequest):
     
     With explainable=true, returns detailed similarity breakdown and interpretations
     """
-    if index is None:
+    if retrieval_system is None:
         raise HTTPException(status_code=503, detail="Index not loaded")
     
     # Validate query file
@@ -101,8 +101,8 @@ async def search(req: SearchRequest):
         query_feat = extract_feature(query_vec)
         
         # Search with optional filters (Hybrid Search)
-        results = two_stage_search(
-            query_feat, req.query_file_path, index, ids, metadata,
+        results = retrieval_system.search(
+            query_feat, req.query_file_path,
             stage1_topn=req.stage1_topn, stage2_topk=req.k,
             fusion_method=req.fusion_method, alpha=req.alpha, beta=req.beta,
             filters=req.filters,  # Enable hybrid search
@@ -118,7 +118,7 @@ async def search(req: SearchRequest):
 @app.get("/stats", response_model=StatsResponse)
 async def get_stats():
     """Get database statistics"""
-    if index is None:
+    if index_manager is None:
         raise HTTPException(status_code=503, detail="Index not loaded")
     
     # Load config
@@ -127,7 +127,7 @@ async def get_stats():
         config_data = json.load(f)
     
     return {
-        "total_vectors": len(ids),
+        "total_vectors": len(index_manager.ids),
         "index_type": config_data.get('index_type', 'unknown'),
         "feature_dim": config_data.get('feature_dim', 32),
         "index_params": {
@@ -141,11 +141,11 @@ async def get_stats():
 @app.get("/vectors/{vector_id:path}")
 async def get_vector(vector_id: str):
     """Get vector metadata by ID"""
-    if index is None:
+    if index_manager is None:
         raise HTTPException(status_code=503, detail="Index not loaded")
     
     # Find in metadata
-    for meta in metadata:
+    for meta in index_manager.metadata:
         if meta['id'] == vector_id:
             return meta
     
@@ -155,7 +155,7 @@ async def get_vector(vector_id: str):
 @app.post("/search/visualize")
 async def search_and_visualize(req: SearchRequest):
     """Search with explanations and generate HTML visualization"""
-    if index is None:
+    if retrieval_system is None:
         raise HTTPException(status_code=503, detail="Index not loaded")
     
     # Validate query file
@@ -164,12 +164,12 @@ async def search_and_visualize(req: SearchRequest):
     
     try:
         # Force explainable mode
-        query_feat = load_macro_vec(req.query_file_path)
-        query_feat = extract_feature(query_feat)
+        query_vec = load_macro_vec(req.query_file_path)
+        query_feat = extract_feature(query_vec)
         
         # Search with explanations
-        results = two_stage_search(
-            query_feat, req.query_file_path, index, ids, metadata,
+        results = retrieval_system.search(
+            query_feat, req.query_file_path,
             stage1_topn=req.stage1_topn, stage2_topk=req.k,
             fusion_method=req.fusion_method, alpha=req.alpha, beta=req.beta,
             filters=req.filters,
@@ -177,7 +177,7 @@ async def search_and_visualize(req: SearchRequest):
         )
         
         # Generate HTML visualization
-        from scripts.visualize_explanation import generate_html_visualization
+        from cad_vectordb.utils.visualization import generate_html_visualization
         output_file = "explanation.html"
         generate_html_visualization(results, req.query_file_path, output_file)
         
@@ -195,7 +195,7 @@ async def search_and_visualize(req: SearchRequest):
 @app.post("/search/batch")
 async def batch_search(req: BatchSearchRequest):
     """Batch search for multiple queries with optional parallel processing"""
-    if index is None:
+    if retrieval_system is None:
         raise HTTPException(status_code=503, detail="Index not loaded")
     
     # Validate query files
@@ -222,8 +222,8 @@ async def batch_search(req: BatchSearchRequest):
                     query_vec = load_macro_vec(query_path)
                     query_feat = extract_feature(query_vec)
                     
-                    results = two_stage_search(
-                        query_feat, query_path, index, ids, metadata,
+                    results = retrieval_system.search(
+                        query_feat, query_path,
                         stage1_topn=req.stage1_topn, stage2_topk=req.k,
                         fusion_method=req.fusion_method, alpha=req.alpha, beta=req.beta,
                         filters=req.filters,
@@ -254,8 +254,8 @@ async def batch_search(req: BatchSearchRequest):
                     query_vec = load_macro_vec(query_path)
                     query_feat = extract_feature(query_vec)
                     
-                    results = two_stage_search(
-                        query_feat, query_path, index, ids, metadata,
+                    results = retrieval_system.search(
+                        query_feat, query_path,
                         stage1_topn=req.stage1_topn, stage2_topk=req.k,
                         fusion_method=req.fusion_method, alpha=req.alpha, beta=req.beta,
                         filters=req.filters,

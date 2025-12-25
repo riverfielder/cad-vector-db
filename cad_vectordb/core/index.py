@@ -206,7 +206,12 @@ class IndexManager:
         with open(load_dir / "config.json", 'r') as f:
             self.config = json.load(f)
         
-        print(f"✅ Loaded index: {len(self.ids)} vectors, dim={self.config['dimension']}")
+        # Handle backward compatibility: add 'dimension' key if only 'feature_dim' exists
+        if 'dimension' not in self.config and 'feature_dim' in self.config:
+            self.config['dimension'] = self.config['feature_dim']
+        
+        dimension = self.config.get('dimension', 'unknown')
+        print(f"✅ Loaded index: {len(self.ids)} vectors, dim={dimension}")
         return self.config
     
     def add_vectors(self, 
@@ -347,9 +352,12 @@ class IndexManager:
         if self.index is None:
             return {"status": "no_index_loaded"}
         
+        # Handle both 'dimension' and 'feature_dim' keys for backward compatibility
+        dimension = self.config.get('dimension') or self.config.get('feature_dim', 0)
+        
         stats = {
             "num_vectors": len(self.ids),
-            "dimension": self.config.get('dimension', 0),
+            "dimension": dimension,
             "index_type": self.config.get('index_type', 'Unknown'),
             "num_subsets": len(set(m['subset'] for m in self.metadata)),
             "avg_seq_len": np.mean([m['seq_len'] for m in self.metadata]),
