@@ -87,18 +87,27 @@ def minmax_normalize(scores):
 class TwoStageRetrieval:
     """Two-stage retrieval system with fusion and filtering"""
     
-    def __init__(self, index, ids: List[str], metadata: List[Dict]):
+    def __init__(self, index_or_manager, ids: Optional[List[str]] = None, metadata: Optional[List[Dict]] = None):
         """Initialize retrieval system
         
         Args:
-            index: FAISS index
-            ids: List of IDs
-            metadata: List of metadata dicts
+            index_or_manager: Either IndexManager object or FAISS index
+            ids: List of IDs (required if index_or_manager is FAISS index)
+            metadata: List of metadata dicts (required if index_or_manager is FAISS index)
         """
-        self.index = index
-        self.ids = ids
-        self.metadata = metadata
-        self.id_to_meta = {m['id']: m for m in metadata}
+        # Support both IndexManager and raw FAISS index
+        if hasattr(index_or_manager, 'index'):  # It's an IndexManager
+            self.index = index_or_manager.index
+            self.ids = index_or_manager.ids
+            self.metadata = index_or_manager.metadata
+        else:  # It's a raw FAISS index
+            if ids is None or metadata is None:
+                raise ValueError("ids and metadata are required when passing raw FAISS index")
+            self.index = index_or_manager
+            self.ids = ids
+            self.metadata = metadata
+        
+        self.id_to_meta = {m['id']: m for m in self.metadata}
     
     def search(self,
               query_vec,

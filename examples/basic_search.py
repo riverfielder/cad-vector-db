@@ -27,11 +27,7 @@ def main():
     print(f"   Loaded {len(manager.ids)} vectors")
     
     # 2. Initialize retrieval
-    retrieval = TwoStageRetrieval(
-        manager.index,
-        manager.ids,
-        manager.metadata
-    )
+    retrieval = TwoStageRetrieval(manager)
     
     # 3. Prepare query
     query_path = "../WHUCAD-main/data/vec/0000/00000000.h5"

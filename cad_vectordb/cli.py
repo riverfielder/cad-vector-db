@@ -90,11 +90,7 @@ def search_cli():
     manager.load_index(args.index_name)
     
     # Initialize retrieval
-    retrieval = TwoStageRetrieval(
-        manager.index,
-        manager.ids,
-        manager.metadata
-    )
+    retrieval = TwoStageRetrieval(manager)
     
     # Load query
     print(f"Query: {args.query}")
@@ -105,7 +101,7 @@ def search_cli():
     print(f"\nSearching (k={args.k}, stage1_topn={args.stage1_topn}, fusion={args.fusion})...")
     
     if args.explainable:
-        results, explanation = retrieval.search(
+        result = retrieval.search(
             query_vec,
             args.query,
             k=args.k,
@@ -114,19 +110,27 @@ def search_cli():
             explainable=True
         )
         
-        print("\n" + "=" * 60)
-        print("🎯 Top Results with Explanations")
-        print("=" * 60)
+        # Handle tuple return for explainable
+        if isinstance(result, tuple):
+            results, explanation = result
+        else:
+            results = result
+            explanation = None
         
-        print(f"\nTop Match: {explanation['top_match']['id']}")
-        print(f"Final Score: {explanation['final_score']:.4f}")
-        print(f"Stage 1 Similarity: {explanation['stage1_similarity']:.4f} - {explanation.get('stage1_interpretation', '')}")
-        print(f"Stage 2 Similarity: {explanation['stage2_similarity']:.4f} - {explanation.get('stage2_interpretation', '')}")
-        
-        if 'contributions' in explanation:
-            print(f"\nContributions:")
-            print(f"  Stage 1: {explanation['contributions']['stage1_percentage']:.1f}%")
-            print(f"  Stage 2: {explanation['contributions']['stage2_percentage']:.1f}%")
+        if explanation:
+            print("\n" + "=" * 60)
+            print("🎯 Top Results with Explanations")
+            print("=" * 60)
+            
+            print(f"\nTop Match: {explanation['top_match']['id']}")
+            print(f"Final Score: {explanation['final_score']:.4f}")
+            print(f"Stage 1 Similarity: {explanation['stage1_similarity']:.4f} - {explanation.get('stage1_interpretation', '')}")
+            print(f"Stage 2 Similarity: {explanation['stage2_similarity']:.4f} - {explanation.get('stage2_interpretation', '')}")
+            
+            if 'contributions' in explanation:
+                print(f"\nContributions:")
+                print(f"  Stage 1: {explanation['contributions']['stage1_percentage']:.1f}%")
+                print(f"  Stage 2: {explanation['contributions']['stage2_percentage']:.1f}%")
     else:
         results = retrieval.search(
             query_vec,

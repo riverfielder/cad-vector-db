@@ -26,11 +26,7 @@ def main():
     manager = IndexManager("./data/indexes")
     manager.load_index("default")
     
-    retrieval = TwoStageRetrieval(
-        manager.index,
-        manager.ids,
-        manager.metadata
-    )
+    retrieval = TwoStageRetrieval(manager)
     
     # 2. Prepare queries
     data_dir = Path("../WHUCAD-main/data/vec/0000")
