@@ -250,7 +250,7 @@ MIT License
 
 ## 作者
 
-- 河田 [@riverfielder](https://github.com/riverfielder)
+- [@riverfielder](https://github.com/riverfielder)
 - 武汉大学 - 计算机科学与技术
 
 ---

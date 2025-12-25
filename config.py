@@ -3,7 +3,7 @@ import os
 
 # Paths
 WHUCAD_DATA_ROOT = "/Users/he.tian/bs/WHUCAD-main/data/vec"
-INDEX_DIR = "data/index"
+INDEX_DIR = "data/index_test"  # Use test index (500 samples)
 METADATA_DB_PATH = "data/metadata.db"
 
 # Vector extraction

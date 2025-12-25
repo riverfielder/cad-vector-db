@@ -37,6 +37,18 @@ class SearchRequest(BaseModel):
     explainable: bool = False  # Return detailed explanations for similarity scores
 
 
+class BatchSearchRequest(BaseModel):
+    query_file_paths: List[str]  # List of query file paths
+    k: int = 20
+    stage1_topn: int = 100
+    fusion_method: str = "weighted"
+    alpha: float = 0.6
+    beta: float = 0.4
+    filters: Optional[Dict] = None
+    explainable: bool = False
+    parallel: bool = True  # Use parallel processing
+
+
 class SearchResult(BaseModel):
     id: str
     score: float
@@ -178,6 +190,105 @@ async def search_and_visualize(req: SearchRequest):
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Visualization error: {str(e)}")
+
+
+@app.post("/search/batch")
+async def batch_search(req: BatchSearchRequest):
+    """Batch search for multiple queries with optional parallel processing"""
+    if index is None:
+        raise HTTPException(status_code=503, detail="Index not loaded")
+    
+    # Validate query files
+    missing_files = [path for path in req.query_file_paths if not os.path.exists(path)]
+    if missing_files:
+        raise HTTPException(
+            status_code=404, 
+            detail=f"Query files not found: {missing_files[:3]}" + 
+                   (f" and {len(missing_files)-3} more" if len(missing_files) > 3 else "")
+        )
+    
+    try:
+        import time
+        start_time = time.time()
+        
+        all_results = {}
+        
+        if req.parallel:
+            # Parallel processing using ThreadPoolExecutor
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            
+            def process_single_query(query_path):
+                try:
+                    query_vec = load_macro_vec(query_path)
+                    query_feat = extract_feature(query_vec)
+                    
+                    results = two_stage_search(
+                        query_feat, query_path, index, ids, metadata,
+                        stage1_topn=req.stage1_topn, stage2_topk=req.k,
+                        fusion_method=req.fusion_method, alpha=req.alpha, beta=req.beta,
+                        filters=req.filters,
+                        explainable=req.explainable
+                    )
+                    return query_path, results, None
+                except Exception as e:
+                    return query_path, None, str(e)
+            
+            # Use ThreadPoolExecutor for parallel processing
+            with ThreadPoolExecutor(max_workers=min(8, len(req.query_file_paths))) as executor:
+                futures = {executor.submit(process_single_query, path): path 
+                          for path in req.query_file_paths}
+                
+                for future in as_completed(futures):
+                    query_path, results, error = future.result()
+                    if error:
+                        all_results[query_path] = {"error": error}
+                    else:
+                        all_results[query_path] = {
+                            "results": results,
+                            "num_results": len(results)
+                        }
+        else:
+            # Sequential processing
+            for query_path in req.query_file_paths:
+                try:
+                    query_vec = load_macro_vec(query_path)
+                    query_feat = extract_feature(query_vec)
+                    
+                    results = two_stage_search(
+                        query_feat, query_path, index, ids, metadata,
+                        stage1_topn=req.stage1_topn, stage2_topk=req.k,
+                        fusion_method=req.fusion_method, alpha=req.alpha, beta=req.beta,
+                        filters=req.filters,
+                        explainable=req.explainable
+                    )
+                    
+                    all_results[query_path] = {
+                        "results": results,
+                        "num_results": len(results)
+                    }
+                except Exception as e:
+                    all_results[query_path] = {"error": str(e)}
+        
+        elapsed_time = time.time() - start_time
+        
+        # Calculate statistics
+        successful = sum(1 for r in all_results.values() if "error" not in r)
+        failed = len(all_results) - successful
+        avg_time_per_query = elapsed_time / len(req.query_file_paths) if req.query_file_paths else 0
+        
+        return {
+            "status": "success",
+            "total_queries": len(req.query_file_paths),
+            "successful": successful,
+            "failed": failed,
+            "elapsed_time": elapsed_time,
+            "avg_time_per_query": avg_time_per_query,
+            "parallel": req.parallel,
+            "results": all_results
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Batch search error: {str(e)}")
 
 
 if __name__ == "__main__":

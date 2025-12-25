@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs
+*.log
+server.log
+
+# Temporary files
+*.tmp
+.DS_Store
+
+# Generated files
+explanation.html
+*.html
+
+# Data (optional - 根据需要调整)
+# data/
+# data/vec/
