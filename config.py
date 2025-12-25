@@ -33,12 +33,12 @@ RRF_K = 60
 API_HOST = "127.0.0.1"
 API_PORT = 8000
 
-# Database
-DB_HOST = "localhost"
-DB_PORT = 5432
+# Database (OceanBase/MySQL)
+DB_HOST = "127.0.0.1"
+DB_PORT = 2881  # OceanBase default port
 DB_NAME = "cad_vector_db"
-DB_USER = "postgres"
-DB_PASSWORD = ""
+DB_USER = "root@test"  # OceanBase format: user@tenant
+DB_PASSWORD = ""  # Set your password here
 
 # Evaluation
 EVAL_METRICS = ["precision", "recall", "map", "latency"]

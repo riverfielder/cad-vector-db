@@ -196,9 +196,11 @@ db/
    - `python test.py --mode enc --ckpt 1000`
    - 替换特征提取为加载z
 
-2. **元数据数据库**（可选，过滤功能）
-   - 将metadata.json导入Postgres/OceanBase
-   - 支持按subset/label过滤检索
+2. **元数据数据库**（已实现，可选）
+   - 安装 OceanBase：`docker run -d --name oceanbase-ce -p 2881:2881 -e MODE=mini oceanbase/oceanbase-ce`
+   - 导入元数据：`python scripts/import_metadata_to_oceanbase.py --metadata data/index_test/metadata.json`
+   - 查询统计：`python scripts/query_metadata_db.py stats`
+   - 详细文档：参见 [docs/OCEANBASE_GUIDE.md](docs/OCEANBASE_GUIDE.md)
 
 3. **部署与优化**
    - Docker化服务
@@ -209,6 +211,41 @@ db/
    - 完整消融实验矩阵
    - 与DeepCAD/其他方法对比
    - 可视化检索结果（调用WHUCAD可视化接口）
+
+## 元数据数据库功能
+
+### 快速开始
+
+```bash
+# 1. 启动 OceanBase（Docker）
+docker run -d --name oceanbase-ce -p 2881:2881 -e MODE=mini oceanbase/oceanbase-ce
+
+# 2. 安装依赖
+pip install pymysql
+
+# 3. 导入元数据
+python scripts/import_metadata_to_oceanbase.py --metadata data/index_test/metadata.json
+
+# 4. 查询统计
+python scripts/query_metadata_db.py stats
+```
+
+### 主要功能
+
+- ✅ 自动创建数据库和表
+- ✅ 批量导入 JSON 元数据
+- ✅ 支持按 subset、seq_len、label 过滤
+- ✅ 提供 Python API 集成到检索流程
+- ✅ 完整的统计和查询功能
+
+### 使用场景
+
+1. **过滤检索**：只在特定 subset 中检索
+2. **序列长度过滤**：按序列长度范围过滤向量
+3. **标签管理**：为向量添加标签（未来扩展）
+4. **统计分析**：查看数据分布和统计信息
+
+详细使用指南请参考 [docs/OCEANBASE_GUIDE.md](docs/OCEANBASE_GUIDE.md)
 
 ## 常见问题
 
