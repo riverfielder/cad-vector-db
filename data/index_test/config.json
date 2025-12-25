@@ -1,0 +1,10 @@
+{
+  "index_type": "HNSW",
+  "feature_dim": 32,
+  "normalized": true,
+  "hnsw_m": 32,
+  "hnsw_ef_construction": 200,
+  "hnsw_ef_search": 128,
+  "ivf_nlist": 100,
+  "ivf_nprobe": 16
+}
