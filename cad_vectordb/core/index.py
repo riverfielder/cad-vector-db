@@ -21,17 +21,33 @@ from tqdm import tqdm
 from datetime import datetime
 
 from .feature import extract_feature
+from .compression import VectorCompressor
+from .cache import QueryCache
 
 
 class IndexManager:
     """Manages FAISS index creation, loading, and modification with incremental updates"""
     
-    def __init__(self, index_dir: str, enable_versioning: bool = False):
+    def __init__(
+        self,
+        index_dir: str,
+        enable_versioning: bool = False,
+        enable_compression: bool = False,
+        compression_type: str = "pq",
+        enable_cache: bool = False,
+        cache_capacity: int = 1000,
+        verbose: bool = True
+    ):
         """Initialize index manager
         
         Args:
             index_dir: Directory to store index files
             enable_versioning: Enable index versioning for rollback support
+            enable_compression: Enable vector compression
+            compression_type: Compression type ("pq", "sq", or "none")
+            enable_cache: Enable query result caching
+            cache_capacity: LRU cache capacity
+            verbose: Print status messages
         """
         self.index_dir = Path(index_dir)
         self.index_dir.mkdir(parents=True, exist_ok=True)
@@ -41,12 +57,35 @@ class IndexManager:
         self.metadata = []
         self.config = {}
         self.enable_versioning = enable_versioning
+        self.verbose = verbose
         
         # Track deleted IDs (for soft delete)
         self.deleted_ids = set()
         
         # Change log for auditing
         self.change_log = []
+        
+        # Compression support
+        self.enable_compression = enable_compression
+        self.compressor = None
+        if enable_compression:
+            self.compressor = VectorCompressor(
+                compression_type=compression_type,
+                verbose=verbose
+            )
+            if verbose:
+                print(f"✓ Compression enabled: {compression_type}")
+        
+        # Caching support
+        self.enable_cache = enable_cache
+        self.cache = None
+        if enable_cache:
+            self.cache = QueryCache(
+                lru_capacity=cache_capacity,
+                verbose=verbose
+            )
+            if verbose:
+                print(f"✓ Cache enabled: capacity={cache_capacity}")
         
     def build_index(self, 
                     data_root: str,
@@ -754,12 +793,254 @@ class IndexManager:
                 filtered_distances.append(dist)
                 filtered_indices.append(idx)
                 filtered_ids.append(id_str)
-                if len(filtered_ids) >= k:
-                    break
+            if len(filtered_ids) >= k:
+                break
         
         return (np.array(filtered_distances), 
                 np.array(filtered_indices), 
                 filtered_ids)
+    
+    def enable_vector_compression(
+        self,
+        compression_type: str = "pq",
+        train_samples: int = 100000
+    ):
+        """
+        Enable vector compression on the index
+        
+        Args:
+            compression_type: "pq" or "sq"
+            train_samples: Number of samples for training quantizer
+        """
+        if self.index is None:
+            raise RuntimeError("No index loaded")
+        
+        dimension = self.index.d
+        
+        # Initialize compressor
+        self.compressor = VectorCompressor(
+            compression_type=compression_type,
+            dimension=dimension,
+            verbose=self.verbose
+        )
+        
+        # Get vectors for training
+        n_vectors = self.index.ntotal
+        if n_vectors > train_samples:
+            # Sample vectors
+            indices = np.random.choice(n_vectors, train_samples, replace=False)
+            vectors = np.zeros((len(indices), dimension), dtype=np.float32)
+            for i, idx in enumerate(indices):
+                vectors[i] = self.index.reconstruct(int(idx))
+        else:
+            # Use all vectors
+            vectors = np.zeros((n_vectors, dimension), dtype=np.float32)
+            for i in range(n_vectors):
+                vectors[i] = self.index.reconstruct(i)
+        
+        # Train compressor
+        self.compressor.train(vectors)
+        
+        # Get compression stats
+        stats = self.compressor.get_compression_stats(vectors)
+        
+        if self.verbose:
+            print(f"\nCompression Statistics:")
+            print(f"  Original size: {stats.original_size / 1024 / 1024:.1f} MB")
+            print(f"  Compressed size: {stats.compressed_size / 1024 / 1024:.1f} MB")
+            print(f"  Compression ratio: {stats.compression_ratio:.2f}x")
+            print(f"  Memory saved: {stats.memory_saved_mb:.1f} MB")
+        
+        self.enable_compression = True
+        self.config['compression'] = {
+            'type': compression_type,
+            'ratio': stats.compression_ratio,
+            'memory_saved_mb': stats.memory_saved_mb
+        }
+        
+        return stats
+    
+    def rebuild_with_compression(
+        self,
+        compression_type: str = "pq",
+        index_type: str = "IVF",
+        nlist: int = 100
+    ):
+        """
+        Rebuild index with compression
+        
+        Args:
+            compression_type: "pq" or "sq"
+            index_type: "IVF" or "HNSW"
+            nlist: Number of clusters for IVF
+        """
+        if self.index is None:
+            raise RuntimeError("No index loaded")
+        
+        if self.verbose:
+            print(f"Rebuilding index with {compression_type} compression...")
+        
+        # Get all vectors
+        n_vectors = self.index.ntotal
+        dimension = self.index.d
+        vectors = np.zeros((n_vectors, dimension), dtype=np.float32)
+        
+        for i in range(n_vectors):
+            vectors[i] = self.index.reconstruct(i)
+        
+        # Initialize and train compressor
+        self.compressor = VectorCompressor(
+            compression_type=compression_type,
+            dimension=dimension,
+            verbose=self.verbose
+        )
+        
+        self.compressor.train(vectors)
+        
+        # Create compressed index
+        new_index = self.compressor.create_compressed_index(
+            index_type=index_type,
+            nlist=nlist
+        )
+        
+        # Train and add vectors
+        if hasattr(new_index, 'train') and not new_index.is_trained:
+            new_index.train(vectors)
+        
+        new_index.add(vectors)
+        
+        # Replace old index
+        old_index = self.index
+        self.index = new_index
+        
+        # Update config
+        self.config['index_type'] = f"{index_type}+{compression_type.upper()}"
+        self.config['compression'] = {'type': compression_type}
+        self.enable_compression = True
+        
+        # Get stats
+        stats = self.compressor.get_compression_stats(vectors)
+        
+        if self.verbose:
+            print(f"✓ Index rebuilt with compression")
+            print(f"  Compression ratio: {stats.compression_ratio:.2f}x")
+            print(f"  Memory saved: {stats.memory_saved_mb:.1f} MB")
+        
+        self._log_change("rebuild_compressed", "index", {
+            "compression_type": compression_type,
+            "index_type": index_type,
+            "compression_ratio": stats.compression_ratio
+        })
+        
+        return stats
+    
+    def enable_query_cache(
+        self,
+        capacity: int = 1000,
+        ttl: int = 3600,
+        use_redis: bool = False
+    ):
+        """
+        Enable query result caching
+        
+        Args:
+            capacity: LRU cache capacity
+            ttl: Time-to-live in seconds
+            use_redis: Enable Redis backend
+        """
+        self.cache = QueryCache(
+            lru_capacity=capacity,
+            lru_ttl=ttl,
+            use_redis=use_redis,
+            verbose=self.verbose
+        )
+        
+        self.enable_cache = True
+        
+        if self.verbose:
+            print(f"✓ Query cache enabled (capacity={capacity}, ttl={ttl}s)")
+    
+    def get_cache_stats(self) -> Dict:
+        """Get cache statistics"""
+        if not self.enable_cache or self.cache is None:
+            return {"enabled": False}
+        
+        return self.cache.get_stats()
+    
+    def clear_cache(self):
+        """Clear query cache"""
+        if self.enable_cache and self.cache is not None:
+            self.cache.clear()
+            if self.verbose:
+                print("✓ Cache cleared")
+    
+    def warm_cache(self, n_samples: int = 100):
+        """
+        Warm up cache with random queries
+        
+        Args:
+            n_samples: Number of random queries to cache
+        """
+        if not self.enable_cache or self.cache is None:
+            if self.verbose:
+                print("⚠ Cache not enabled")
+            return
+        
+        if self.index is None:
+            raise RuntimeError("No index loaded")
+        
+        # Generate random query samples
+        dimension = self.index.d
+        query_samples = []
+        
+        for _ in range(n_samples):
+            query_vec = np.random.randn(dimension).astype(np.float32)
+            query_vec = query_vec / (np.linalg.norm(query_vec) + 1e-8)
+            k = np.random.choice([5, 10, 20])
+            query_samples.append((query_vec, k))
+        
+        # Define search function
+        def search_fn(query_vec, k):
+            D, I = self.index.search(query_vec.reshape(1, -1), k)
+            results = []
+            for idx, dist in zip(I[0], D[0]):
+                if idx < len(self.ids):
+                    results.append({
+                        "id": self.ids[idx],
+                        "distance": float(dist),
+                        "metadata": self.metadata[idx]
+                    })
+            return results
+        
+        # Warm cache
+        self.cache.warm_cache(query_samples, search_fn)
+    
+    def get_compression_stats(self) -> Optional[Dict]:
+        """Get compression statistics"""
+        if not self.enable_compression or self.compressor is None:
+            return None
+        
+        if self.index is None:
+            return None
+        
+        # Get sample vectors
+        n_vectors = self.index.ntotal
+        dimension = self.index.d
+        sample_size = min(1000, n_vectors)
+        vectors = np.zeros((sample_size, dimension), dtype=np.float32)
+        
+        for i in range(sample_size):
+            vectors[i] = self.index.reconstruct(i)
+        
+        stats = self.compressor.get_compression_stats(vectors)
+        
+        return {
+            "compression_type": self.compressor.compression_type,
+            "compression_ratio": stats.compression_ratio,
+            "memory_saved_mb": stats.memory_saved_mb,
+            "original_size_mb": stats.original_size / 1024 / 1024,
+            "compressed_size_mb": stats.compressed_size / 1024 / 1024
+        }
     
     def _log_change(self, operation: str, target: str, details: str = ""):
         """Log a change operation
@@ -780,10 +1061,4 @@ class IndexManager:
         # Keep only last 1000 entries
         if len(self.change_log) > 1000:
             self.change_log = self.change_log[-1000:]
-                break  # Only report first mismatch
-        
-        return {
-            "valid": len(issues) == 0,
-            "num_vectors": len(self.ids),
-            "issues": issues
-        }
+

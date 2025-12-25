@@ -678,6 +678,151 @@ async def get_changelog(limit: int = 100):
         raise HTTPException(status_code=500, detail=f"Get changelog error: {str(e)}")
 
 
+@app.post("/index/compress")
+async def compress_index(compression_type: str = "pq"):
+    """
+    Enable compression on the index
+    
+    Parameters:
+    - compression_type: "pq" (Product Quantization) or "sq" (Scalar Quantization)
+    """
+    try:
+        stats = index_manager.enable_vector_compression(
+            compression_type=compression_type
+        )
+        return {
+            "status": "success",
+            "message": f"Compression enabled: {compression_type}",
+            "compression_ratio": stats.compression_ratio,
+            "memory_saved_mb": stats.memory_saved_mb,
+            "original_size_mb": stats.original_size / 1024 / 1024,
+            "compressed_size_mb": stats.compressed_size / 1024 / 1024
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Compression error: {str(e)}")
+
+
+@app.post("/index/rebuild-compressed")
+async def rebuild_compressed(
+    compression_type: str = "pq",
+    index_type: str = "IVF",
+    nlist: int = 100
+):
+    """
+    Rebuild index with compression
+    
+    Parameters:
+    - compression_type: "pq" or "sq"
+    - index_type: "IVF" or "HNSW"
+    - nlist: Number of clusters for IVF
+    """
+    try:
+        stats = index_manager.rebuild_with_compression(
+            compression_type=compression_type,
+            index_type=index_type,
+            nlist=nlist
+        )
+        return {
+            "status": "success",
+            "message": "Index rebuilt with compression",
+            "compression_ratio": stats.compression_ratio,
+            "memory_saved_mb": stats.memory_saved_mb
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Rebuild error: {str(e)}")
+
+
+@app.get("/index/compression-stats")
+async def get_compression_stats():
+    """Get compression statistics"""
+    try:
+        stats = index_manager.get_compression_stats()
+        if stats is None:
+            return {
+                "status": "success",
+                "compression_enabled": False,
+                "message": "Compression not enabled"
+            }
+        return {
+            "status": "success",
+            "compression_enabled": True,
+            **stats
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Get stats error: {str(e)}")
+
+
+@app.post("/cache/enable")
+async def enable_cache(capacity: int = 1000, ttl: int = 3600, use_redis: bool = False):
+    """
+    Enable query result caching
+    
+    Parameters:
+    - capacity: LRU cache capacity
+    - ttl: Time-to-live in seconds
+    - use_redis: Enable Redis backend
+    """
+    try:
+        index_manager.enable_query_cache(
+            capacity=capacity,
+            ttl=ttl,
+            use_redis=use_redis
+        )
+        return {
+            "status": "success",
+            "message": "Cache enabled",
+            "capacity": capacity,
+            "ttl": ttl,
+            "redis_enabled": use_redis
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Enable cache error: {str(e)}")
+
+
+@app.get("/cache/stats")
+async def get_cache_stats():
+    """Get cache statistics"""
+    try:
+        stats = index_manager.get_cache_stats()
+        return {
+            "status": "success",
+            **stats
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Get cache stats error: {str(e)}")
+
+
+@app.post("/cache/clear")
+async def clear_cache():
+    """Clear query cache"""
+    try:
+        index_manager.clear_cache()
+        return {
+            "status": "success",
+            "message": "Cache cleared"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Clear cache error: {str(e)}")
+
+
+@app.post("/cache/warm")
+async def warm_cache(n_samples: int = 100):
+    """
+    Warm up cache with random queries
+    
+    Parameters:
+    - n_samples: Number of random queries to cache
+    """
+    try:
+        index_manager.warm_cache(n_samples=n_samples)
+        return {
+            "status": "success",
+            "message": f"Cache warmed with {n_samples} samples"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Warm cache error: {str(e)}")
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host=API_HOST, port=API_PORT)
