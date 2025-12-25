@@ -6,3 +6,17 @@ uvicorn>=0.23.0
 pydantic>=2.0.0
 pymysql>=1.0.0
 tqdm>=4.42.0
+
+# Semantic search dependencies
+sentence-transformers>=2.2.0  # Multilingual text encoding (recommended)
+
+# Optional: for CLIP encoder (multi-modal search)
+# ftfy>=6.0.0
+# regex>=2022.0.0
+# git+https://github.com/openai/CLIP.git
+
+# Optional: for Chinese tokenization in BM25
+# jieba>=0.42.0
+
+# Optional: for API examples
+# httpx>=0.24.0

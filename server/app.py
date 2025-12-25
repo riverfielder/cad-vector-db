@@ -13,6 +13,7 @@ from config import *
 from cad_vectordb.core.index import IndexManager
 from cad_vectordb.core.retrieval import TwoStageRetrieval
 from cad_vectordb.core.feature import extract_feature, load_macro_vec
+from cad_vectordb.core.text_encoder import create_text_encoder
 
 # Initialize FastAPI
 app = FastAPI(title="CAD Vector Database API", version="1.0.0")
@@ -20,6 +21,7 @@ app = FastAPI(title="CAD Vector Database API", version="1.0.0")
 # Global state
 index_manager = None
 retrieval_system = None
+text_encoder = None  # Lazy loading for semantic search
 
 
 class SearchRequest(BaseModel):
@@ -45,6 +47,26 @@ class BatchSearchRequest(BaseModel):
     filters: Optional[Dict] = None
     explainable: bool = False
     parallel: bool = True  # Use parallel processing
+
+
+class SemanticSearchRequest(BaseModel):
+    query_text: str  # Natural language query
+    k: int = 20
+    encoder_type: str = "sentence-transformer"  # 'sentence-transformer', 'clip', or 'bm25'
+    model_name: Optional[str] = None  # Optional specific model name
+    filters: Optional[Dict] = None
+    explainable: bool = False
+
+
+class HybridSearchRequest(BaseModel):
+    query_text: str
+    query_file_path: Optional[str] = None  # Optional CAD vector for hybrid search
+    k: int = 20
+    semantic_weight: float = 0.5
+    vector_weight: float = 0.5
+    encoder_type: str = "sentence-transformer"
+    model_name: Optional[str] = None
+    filters: Optional[Dict] = None
 
 
 class SearchResult(BaseModel):
@@ -78,7 +100,15 @@ async def root():
     return {
         "message": "CAD Vector Database API",
         "version": "1.0.0",
-        "endpoints": ["/search", "/stats", "/vectors/{id}"]
+        "endpoints": [
+            "/search",
+            "/search/semantic",
+            "/search/hybrid",
+            "/search/batch",
+            "/search/visualize",
+            "/stats",
+            "/vectors/{id}"
+        ]
     }
 
 
@@ -289,6 +319,127 @@ async def batch_search(req: BatchSearchRequest):
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Batch search error: {str(e)}")
+
+
+@app.post("/search/semantic")
+async def semantic_search(req: SemanticSearchRequest):
+    """Semantic search using natural language queries
+    
+    Supports multiple languages (Chinese and English) and different embedding models.
+    
+    Example queries:
+    - "圆柱形零件" (Chinese: cylindrical part)
+    - "mechanical component with holes"
+    - "找一个有螺纹的轴"
+    """
+    global text_encoder
+    
+    if retrieval_system is None:
+        raise HTTPException(status_code=503, detail="Index not loaded")
+    
+    try:
+        # Lazy load text encoder (avoid loading on startup if not needed)
+        if text_encoder is None or type(text_encoder).__name__ != req.encoder_type:
+            print(f"Loading text encoder: {req.encoder_type}")
+            text_encoder = create_text_encoder(
+                encoder_type=req.encoder_type,
+                model_name=req.model_name,
+                device="cpu",  # Use GPU if available: "cuda"
+                use_cache=True
+            )
+            print(f"Text encoder loaded, dimension: {text_encoder.dimension}")
+        
+        # Perform semantic search
+        if req.explainable:
+            results, explanation = retrieval_system.semantic_search(
+                query_text=req.query_text,
+                text_encoder=text_encoder,
+                k=req.k,
+                filters=req.filters,
+                explainable=True
+            )
+            return {
+                "status": "success",
+                "query_text": req.query_text,
+                "num_results": len(results),
+                "results": results,
+                "explanation": explanation
+            }
+        else:
+            results = retrieval_system.semantic_search(
+                query_text=req.query_text,
+                text_encoder=text_encoder,
+                k=req.k,
+                filters=req.filters,
+                explainable=False
+            )
+            return {
+                "status": "success",
+                "query_text": req.query_text,
+                "num_results": len(results),
+                "results": results
+            }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Semantic search error: {str(e)}")
+
+
+@app.post("/search/hybrid")
+async def hybrid_search(req: HybridSearchRequest):
+    """Hybrid search combining semantic and vector-based retrieval
+    
+    Fuses results from both text-based and CAD vector-based search for better accuracy.
+    """
+    global text_encoder
+    
+    if retrieval_system is None:
+        raise HTTPException(status_code=503, detail="Index not loaded")
+    
+    try:
+        # Load text encoder if needed
+        if text_encoder is None or type(text_encoder).__name__ != req.encoder_type:
+            print(f"Loading text encoder: {req.encoder_type}")
+            text_encoder = create_text_encoder(
+                encoder_type=req.encoder_type,
+                model_name=req.model_name,
+                device="cpu",
+                use_cache=True
+            )
+        
+        # Load CAD vector if provided
+        query_vec = None
+        if req.query_file_path:
+            if not os.path.exists(req.query_file_path):
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Query file not found: {req.query_file_path}"
+                )
+            query_vec = load_macro_vec(req.query_file_path)
+        
+        # Perform hybrid search
+        results = retrieval_system.hybrid_search(
+            query_text=req.query_text,
+            text_encoder=text_encoder,
+            query_vec=query_vec,
+            query_file_path=req.query_file_path,
+            k=req.k,
+            semantic_weight=req.semantic_weight,
+            vector_weight=req.vector_weight,
+            filters=req.filters
+        )
+        
+        return {
+            "status": "success",
+            "query_text": req.query_text,
+            "query_file": req.query_file_path,
+            "semantic_weight": req.semantic_weight,
+            "vector_weight": req.vector_weight,
+            "num_results": len(results),
+            "results": results
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Hybrid search error: {str(e)}")
 
 
 if __name__ == "__main__":
