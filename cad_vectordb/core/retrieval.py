@@ -205,6 +205,16 @@ class TwoStageRetrieval:
             explanation = self._generate_explanation(
                 results[0], fusion_method, alpha, beta
             )
+            
+            # Add vector-level feature analysis
+            query_feat = extract_feature(query_vec)
+            top_result_vec = self._load_macro_vec(results[0]['metadata']['file_path'])
+            top_result_feat = extract_feature(top_result_vec)
+            explanation['feature_analysis'] = self._analyze_feature_vectors(
+                query_feat, top_result_feat
+            )
+            
+            results[0]['explanation'] = explanation
             return results, explanation
         
         return results
@@ -261,7 +271,7 @@ class TwoStageRetrieval:
         return scores / (2 * n)  # Normalize
     
     def _generate_explanation(self, top_result: Dict, fusion_method: str, alpha: float, beta: float) -> Dict:
-        """Generate explanation for top result"""
+        """Generate comprehensive explanation for top result"""
         stage1_sim = top_result['stage1_sim']
         stage2_sim = top_result['stage2_sim']
         fused_score = top_result['score']
@@ -279,6 +289,7 @@ class TwoStageRetrieval:
             'final_score': fused_score,
         }
         
+        # Calculate contributions
         if fusion_method == 'weighted':
             contrib1 = alpha * stage1_sim
             contrib2 = beta * stage2_sim
@@ -291,22 +302,199 @@ class TwoStageRetrieval:
                 'stage2_percentage': (contrib2 / fused_score * 100) if fused_score > 0 else 0,
             }
         
-        # Add interpretations
-        if stage1_sim > 0.9:
-            explanation['stage1_interpretation'] = 'Excellent feature-level match'
+        # Enhanced interpretations with more granularity
+        if stage1_sim > 0.95:
+            explanation['stage1_interpretation'] = '优异的特征匹配 (Excellent feature-level match)'
+            explanation['stage1_quality'] = 'excellent'
+        elif stage1_sim > 0.85:
+            explanation['stage1_interpretation'] = '很好的特征匹配 (Very good feature-level match)'
+            explanation['stage1_quality'] = 'very_good'
         elif stage1_sim > 0.7:
-            explanation['stage1_interpretation'] = 'Good feature-level match'
+            explanation['stage1_interpretation'] = '良好的特征匹配 (Good feature-level match)'
+            explanation['stage1_quality'] = 'good'
+        elif stage1_sim > 0.5:
+            explanation['stage1_interpretation'] = '中等的特征匹配 (Moderate feature-level match)'
+            explanation['stage1_quality'] = 'moderate'
         else:
-            explanation['stage1_interpretation'] = 'Moderate feature-level match'
+            explanation['stage1_interpretation'] = '较弱的特征匹配 (Weak feature-level match)'
+            explanation['stage1_quality'] = 'weak'
         
-        if stage2_sim > 0.9:
-            explanation['stage2_interpretation'] = 'Excellent sequence-level match'
+        if stage2_sim > 0.95:
+            explanation['stage2_interpretation'] = '优异的序列匹配 (Excellent sequence-level match)'
+            explanation['stage2_quality'] = 'excellent'
+        elif stage2_sim > 0.85:
+            explanation['stage2_interpretation'] = '很好的序列匹配 (Very good sequence-level match)'
+            explanation['stage2_quality'] = 'very_good'
         elif stage2_sim > 0.7:
-            explanation['stage2_interpretation'] = 'Good sequence-level match'
+            explanation['stage2_interpretation'] = '良好的序列匹配 (Good sequence-level match)'
+            explanation['stage2_quality'] = 'good'
+        elif stage2_sim > 0.5:
+            explanation['stage2_interpretation'] = '中等的序列匹配 (Moderate sequence-level match)'
+            explanation['stage2_quality'] = 'moderate'
         else:
-            explanation['stage2_interpretation'] = 'Moderate sequence-level match'
+            explanation['stage2_interpretation'] = '较弱的序列匹配 (Weak sequence-level match)'
+            explanation['stage2_quality'] = 'weak'
+        
+        # Overall match analysis
+        explanation['match_analysis'] = self._analyze_match_quality(stage1_sim, stage2_sim, fused_score)
+        
+        # Confidence and reliability
+        explanation['confidence'] = self._calculate_confidence(stage1_sim, stage2_sim)
+        
+        # Recommendations
+        explanation['recommendations'] = self._generate_recommendations(stage1_sim, stage2_sim, fused_score)
         
         return explanation
+    
+    def _analyze_match_quality(self, stage1_sim: float, stage2_sim: float, final_score: float) -> Dict:
+        """Analyze overall match quality"""
+        diff = abs(stage1_sim - stage2_sim)
+        
+        analysis = {
+            'similarity_difference': diff,
+            'consistency': 'high' if diff < 0.1 else 'medium' if diff < 0.3 else 'low',
+        }
+        
+        # Determine match type
+        if stage1_sim > 0.8 and stage2_sim > 0.8:
+            analysis['match_type'] = 'strong_overall'
+            analysis['description'] = '特征和序列都高度匹配 (Both feature and sequence match strongly)'
+        elif stage1_sim > 0.8 and stage2_sim < 0.5:
+            analysis['match_type'] = 'feature_dominant'
+            analysis['description'] = '特征匹配好但序列差异大 (Good feature match but sequence differs)'
+        elif stage1_sim < 0.5 and stage2_sim > 0.8:
+            analysis['match_type'] = 'sequence_dominant'
+            analysis['description'] = '序列匹配好但特征差异大 (Good sequence match but features differ)'
+        elif diff < 0.2:
+            analysis['match_type'] = 'balanced'
+            analysis['description'] = '特征和序列匹配均衡 (Balanced match between feature and sequence)'
+        else:
+            analysis['match_type'] = 'mixed'
+            analysis['description'] = '特征和序列匹配不一致 (Inconsistent feature and sequence match)'
+        
+        return analysis
+    
+    def _calculate_confidence(self, stage1_sim: float, stage2_sim: float) -> Dict:
+        """Calculate confidence metrics"""
+        # Confidence based on similarity values and consistency
+        avg_sim = (stage1_sim + stage2_sim) / 2
+        diff = abs(stage1_sim - stage2_sim)
+        
+        # Confidence score: higher when both similarities are high and consistent
+        confidence_score = avg_sim * (1 - diff * 0.5)
+        
+        if confidence_score > 0.85:
+            level = 'very_high'
+            description = '非常高置信度 (Very high confidence)'
+        elif confidence_score > 0.7:
+            level = 'high'
+            description = '高置信度 (High confidence)'
+        elif confidence_score > 0.5:
+            level = 'medium'
+            description = '中等置信度 (Medium confidence)'
+        else:
+            level = 'low'
+            description = '低置信度 (Low confidence)'
+        
+        return {
+            'score': confidence_score,
+            'level': level,
+            'description': description,
+            'reliability': '推荐使用' if confidence_score > 0.7 else '谨慎使用' if confidence_score > 0.5 else '需要人工确认'
+        }
+    
+    def _generate_recommendations(self, stage1_sim: float, stage2_sim: float, final_score: float) -> List[str]:
+        """Generate actionable recommendations"""
+        recommendations = []
+        
+        if final_score > 0.9:
+            recommendations.append('✅ 这是一个高质量匹配,可以直接使用')
+        elif final_score > 0.7:
+            recommendations.append('✅ 这是一个良好匹配,建议人工确认关键细节')
+        elif final_score > 0.5:
+            recommendations.append('⚠️ 这是一个中等匹配,需要仔细检查差异')
+        else:
+            recommendations.append('⚠️ 匹配度较低,建议扩大搜索范围或调整查询')
+        
+        # Stage-specific recommendations
+        if stage1_sim < 0.5:
+            recommendations.append('💡 特征级匹配较弱:可能需要更多特征相似的样本进行训练')
+        
+        if stage2_sim < 0.5:
+            recommendations.append('💡 序列级匹配较弱:CAD命令序列或参数存在较大差异')
+        
+        diff = abs(stage1_sim - stage2_sim)
+        if diff > 0.4:
+            recommendations.append('💡 两阶段匹配不一致:建议查看详细的序列对比分析')
+            if stage1_sim > stage2_sim:
+                recommendations.append('   - 特征相似但操作步骤不同,可能是设计思路相似但实现方式不同')
+            else:
+                recommendations.append('   - 操作步骤相似但特征不同,可能是相同建模过程但不同尺寸')
+        
+        if final_score > 0.6 and diff < 0.2:
+            recommendations.append('✨ 匹配结果一致性高,这是一个可靠的结果')
+        
+        return recommendations
+    
+    def _analyze_feature_vectors(self, query_feat: np.ndarray, result_feat: np.ndarray) -> Dict:
+        """Analyze feature vector similarity at dimension level"""
+        # Calculate L2 distance and cosine similarity
+        l2_dist = np.linalg.norm(query_feat - result_feat)
+        
+        # Cosine similarity
+        query_norm = np.linalg.norm(query_feat)
+        result_norm = np.linalg.norm(result_feat)
+        cosine_sim = np.dot(query_feat, result_feat) / (query_norm * result_norm + 1e-8)
+        
+        # Per-dimension differences
+        diff_per_dim = np.abs(query_feat - result_feat)
+        
+        # Statistical analysis
+        analysis = {
+            'l2_distance': float(l2_dist),
+            'cosine_similarity': float(cosine_sim),
+            'mean_absolute_difference': float(diff_per_dim.mean()),
+            'max_absolute_difference': float(diff_per_dim.max()),
+            'min_absolute_difference': float(diff_per_dim.min()),
+            'std_difference': float(diff_per_dim.std()),
+        }
+        
+        # Top divergent dimensions (most different)
+        top_k_divergent = 5
+        divergent_indices = np.argsort(diff_per_dim)[-top_k_divergent:][::-1]
+        analysis['top_divergent_dims'] = [
+            {
+                'dimension': int(idx),
+                'query_value': float(query_feat[idx]),
+                'result_value': float(result_feat[idx]),
+                'difference': float(diff_per_dim[idx])
+            }
+            for idx in divergent_indices
+        ]
+        
+        # Top similar dimensions (most similar)
+        similar_indices = np.argsort(diff_per_dim)[:top_k_divergent]
+        analysis['top_similar_dims'] = [
+            {
+                'dimension': int(idx),
+                'query_value': float(query_feat[idx]),
+                'result_value': float(result_feat[idx]),
+                'difference': float(diff_per_dim[idx])
+            }
+            for idx in similar_indices
+        ]
+        
+        # Interpretation
+        if cosine_sim > 0.95:
+            analysis['vector_interpretation'] = '向量方向高度一致 (Highly aligned vectors)'
+        elif cosine_sim > 0.85:
+            analysis['vector_interpretation'] = '向量方向较为一致 (Well aligned vectors)'
+        elif cosine_sim > 0.7:
+            analysis['vector_interpretation'] = '向量方向基本一致 (Moderately aligned vectors)'
+        else:
+            analysis['vector_interpretation'] = '向量方向存在差异 (Divergent vectors)'
+        
+        return analysis
     
     def semantic_search(self,
                        query_text: str,
