@@ -89,8 +89,9 @@ def fusion_rrf(ranks_stage1, ranks_stage2, k=60):
 
 def two_stage_search(query_feat, query_file_path, index, ids, metadata, 
                       stage1_topn=100, stage2_topk=20, 
-                      fusion_method="weighted", alpha=0.6, beta=0.4, rrf_k=60):
-    """Two-stage retrieval with fusion
+                      fusion_method="weighted", alpha=0.6, beta=0.4, rrf_k=60,
+                      filters=None):
+    """Two-stage retrieval with fusion and optional metadata filtering
     
     Args:
         query_feat: (32,) query feature
@@ -103,18 +104,48 @@ def two_stage_search(query_feat, query_file_path, index, ids, metadata,
         fusion_method: "weighted", "rrf", or "borda"
         alpha, beta: weights for weighted fusion
         rrf_k: constant for RRF
+        filters: dict with optional filters:
+            - subset: str or list of str (e.g., "0000" or ["0000", "0001"])
+            - min_seq_len: int
+            - max_seq_len: int
+            - label: str or list of str
     
     Returns:
         results: list of dicts with {id, score, sim_stage1, sim_stage2, metadata}
     """
+    # Apply pre-filtering if filters provided
+    allowed_indices = None
+    if filters:
+        allowed_indices = apply_metadata_filters(metadata, filters)
+        if not allowed_indices:
+            print("Warning: No vectors match the filters, returning empty results")
+            return []
+        print(f"Filtered to {len(allowed_indices)} vectors (from {len(metadata)} total)")
+    
     # Stage 1: ANN recall
     query_feat = query_feat.reshape(1, -1).astype('float32')
     if USE_NORMALIZATION:
         faiss.normalize_L2(query_feat)
     
-    D_stage1, I_stage1 = index.search(query_feat, stage1_topn)
+    # Search with larger topn if filtering is applied
+    search_topn = stage1_topn * 3 if allowed_indices else stage1_topn
+    D_stage1, I_stage1 = index.search(query_feat, search_topn)
     D_stage1 = D_stage1[0]
     I_stage1 = I_stage1[0]
+    
+    # Apply filtering to Stage 1 results
+    if allowed_indices:
+        allowed_set = set(allowed_indices)
+        filtered_results = [(d, idx) for d, idx in zip(D_stage1, I_stage1) if idx in allowed_set]
+        
+        if not filtered_results:
+            print("Warning: No results match filters after Stage 1 retrieval")
+            return []
+        
+        # Take top-N after filtering
+        filtered_results = filtered_results[:stage1_topn]
+        D_stage1 = np.array([d for d, _ in filtered_results])
+        I_stage1 = np.array([idx for _, idx in filtered_results])
     
     # Convert distances to similarities (for cosine: 1 - dist/2; for L2: 1/(1+dist))
     if USE_NORMALIZATION:  # cosine
@@ -176,15 +207,69 @@ def two_stage_search(query_feat, query_file_path, index, ids, metadata,
     results = []
     for i in top_indices:
         idx = I_stage1[i]
-        results.append({
+        result = {
             'id': ids[idx],
             'score': float(fused_scores[i]),
             'sim_stage1': float(sim_stage1_norm[i]),
             'sim_stage2': float(sim_stage2_norm[i]),
             'metadata': metadata[idx]
-        })
+        }
+        
+        # Add filter match info if filters were applied
+        if filters:
+            result['filter_matched'] = True
+        
+        results.append(result)
     
     return results
+
+
+def apply_metadata_filters(metadata, filters):
+    """Apply metadata filters and return list of allowed indices
+    
+    Args:
+        metadata: list of metadata dicts
+        filters: dict with keys:
+            - subset: str or list
+            - min_seq_len: int
+            - max_seq_len: int
+            - label: str or list
+    
+    Returns:
+        allowed_indices: list of indices that match filters
+    """
+    allowed_indices = []
+    
+    for idx, meta in enumerate(metadata):
+        # Check subset filter
+        if 'subset' in filters:
+            subset_filter = filters['subset']
+            if isinstance(subset_filter, str):
+                subset_filter = [subset_filter]
+            if meta.get('subset') not in subset_filter:
+                continue
+        
+        # Check sequence length filters
+        if 'min_seq_len' in filters:
+            if meta.get('seq_len', 0) < filters['min_seq_len']:
+                continue
+        
+        if 'max_seq_len' in filters:
+            if meta.get('seq_len', float('inf')) > filters['max_seq_len']:
+                continue
+        
+        # Check label filter
+        if 'label' in filters:
+            label_filter = filters['label']
+            if isinstance(label_filter, str):
+                label_filter = [label_filter]
+            if meta.get('label') not in label_filter:
+                continue
+        
+        # If all filters passed, add to allowed indices
+        allowed_indices.append(idx)
+    
+    return allowed_indices
 
 
 def load_index_and_metadata(index_dir):

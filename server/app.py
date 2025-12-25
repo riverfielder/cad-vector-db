@@ -31,6 +31,8 @@ class SearchRequest(BaseModel):
     fusion_method: str = "weighted"
     alpha: float = 0.6
     beta: float = 0.4
+    # Hybrid search filters
+    filters: Optional[Dict] = None  # {"subset": "0000", "min_seq_len": 10, "max_seq_len": 100}
 
 
 class SearchResult(BaseModel):
@@ -68,7 +70,7 @@ async def root():
 
 @app.post("/search", response_model=List[SearchResult])
 async def search(req: SearchRequest):
-    """Two-stage search with fusion"""
+    """Two-stage search with fusion and optional metadata filtering (Hybrid Search)"""
     if index is None:
         raise HTTPException(status_code=503, detail="Index not loaded")
     
@@ -81,11 +83,12 @@ async def search(req: SearchRequest):
         query_vec = load_macro_vec(req.query_file_path)
         query_feat = extract_feature(query_vec)
         
-        # Search
+        # Search with optional filters (Hybrid Search)
         results = two_stage_search(
             query_feat, req.query_file_path, index, ids, metadata,
             stage1_topn=req.stage1_topn, stage2_topk=req.k,
-            fusion_method=req.fusion_method, alpha=req.alpha, beta=req.beta
+            fusion_method=req.fusion_method, alpha=req.alpha, beta=req.beta,
+            filters=req.filters  # Enable hybrid search
         )
         
         return results
@@ -117,7 +120,7 @@ async def get_stats():
     }
 
 
-@app.get("/vectors/{vector_id}")
+@app.get("/vectors/{vector_id:path}")
 async def get_vector(vector_id: str):
     """Get vector metadata by ID"""
     if index is None:
