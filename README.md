@@ -17,7 +17,8 @@
 - 🎯 **融合排序**：加权融合/RRF/Borda 三种策略
 - 🧠 **语义查询**：自然语言文本检索（Sentence-BERT/CLIP/BM25）
 - 🔀 **混合检索**：文本 + 向量混合查询
-- 📊 **可解释检索**：详细相似度分析与解释
+- 📊 **可解释检索**：5级质量评级 + 匹配类型分析 + 置信度评估 + 智能推荐
+- 🎨 **可视化分析**：现代化HTML界面，渐变设计，动画进度条，双语支持
 - 🔎 **批量检索**：高效并行批量查询
 
 ✅ **索引管理**
@@ -29,8 +30,10 @@
 - 🗜️ **索引压缩**：自动清理已删除向量
 
 ✅ **数据库集成**
-- 🗄️ **元数据数据库**：OceanBase/PostgreSQL 集成
-- 🔍 **混合查询**：向量检索 + SQL 过滤
+- 🗄️ **元数据数据库**：OceanBase/MySQL/PostgreSQL 支持
+- 📥 **数据导入工具**：命令行批量导入元数据（支持批量处理、表重建）
+- 🔍 **数据查询工具**：多维度查询（统计/ID查询/子集/序列长度/导出）
+- 🔀 **混合查询**：向量检索 + SQL 过滤
 - 📈 **性能监控**：查询统计与分析
 
 ✅ **生产特性**
@@ -144,7 +147,7 @@ results = retrieval.hybrid_search(
 ```
 
 #### 4. 可解释检索（Explainable Retrieval）
-提供详细的相似度分析：
+提供详细的相似度分析和智能推荐：
 ```python
 results = retrieval.search(
     query_feature,
@@ -152,8 +155,22 @@ results = retrieval.search(
     k=10,
     explainable=True
 )
-# 返回包含 similarity_breakdown 和 interpretation
+# 返回13个解释性字段：
+# - quality_rating: 5级质量评级（excellent/very_good/good/moderate/weak）
+# - match_type: 匹配类型（strong_overall/feature_dominant/sequence_dominant等）
+# - confidence_score: 置信度评分（0-1）
+# - recommendations: 智能优化建议
+# - feature_analysis: 特征向量深度分析（L2距离/余弦相似度/Top-K维度）
+# - 可视化HTML：现代化界面，渐变背景，动画进度条
 ```
+
+**增强特性：**
+- **5级质量评级**：从优异到较弱的细粒度评分
+- **匹配类型识别**：自动识别5种匹配模式
+- **置信度评估**：基于相似度和一致性的综合评分
+- **智能推荐**：6种场景的自动优化建议
+- **特征分析**：维度级别的详细分析（L2/余弦/Top-K贡献维度）
+- **现代化可视化**：渐变设计、质量徽章、动画效果、双语支持
 
 ### ➕ 增量更新
 
@@ -192,10 +209,57 @@ index_manager.restore_snapshot("v1.0")
 
 ### 🗄️ 元数据数据库
 
-支持 OceanBase/PostgreSQL 集成：
+支持 OceanBase/MySQL/PostgreSQL 集成，提供完整的命令行工具：
 
+**数据导入工具（`scripts/import_metadata_to_oceanbase.py`）：**
+```bash
+# 基础导入
+python scripts/import_metadata_to_oceanbase.py \
+    --metadata data/indices/metadata.json
+
+# 自定义数据库连接
+python scripts/import_metadata_to_oceanbase.py \
+    --metadata data/indices/metadata.json \
+    --host 127.0.0.1 \
+    --port 2881 \
+    --user root@test \
+    --password mypass \
+    --database cad_db
+
+# 删除旧表并重新导入
+python scripts/import_metadata_to_oceanbase.py \
+    --metadata data/indices/metadata.json \
+    --drop-table
+
+# 调整批量大小（大数据集）
+python scripts/import_metadata_to_oceanbase.py \
+    --metadata data/indices/metadata.json \
+    --batch-size 5000
+```
+
+**数据查询工具（`scripts/query_metadata_db.py`）：**
+```bash
+# 查看统计信息
+python scripts/query_metadata_db.py stats
+
+# 获取特定记录
+python scripts/query_metadata_db.py get "0000/00000001.h5"
+
+# 按子集查询
+python scripts/query_metadata_db.py subset 0000 --limit 10
+
+# 按序列长度查询
+python scripts/query_metadata_db.py seqlen --min 10 --max 20
+
+# 导出查询结果
+python scripts/query_metadata_db.py export \
+    --subset 0000 \
+    --output results.json
+```
+
+**Python API：**
 ```python
-from cad_vectordb.metadata import MetadataDB
+from cad_vectordb.database.metadata import MetadataDB
 
 # 连接数据库
 db = MetadataDB(
@@ -292,7 +356,9 @@ cad-vector-db/
 │
 ├── scripts/                    # 工具脚本
 │   ├── build_index.py         # 索引构建
-│   └── retrieval.py           # 检索测试
+│   ├── import_metadata_to_oceanbase.py  # 元数据导入工具
+│   ├── query_metadata_db.py   # 元数据查询工具
+│   └── test_metadata_db_setup.sh  # 数据库测试
 │
 ├── examples/                   # 使用示例
 │   ├── incremental_updates_example.py
@@ -341,8 +407,9 @@ cad-vector-db/
 - **[增量更新指南](docs/INCREMENTAL_UPDATES_GUIDE.md)** - 在线更新索引
 - **[语义检索指南](docs/SEMANTIC_SEARCH_GUIDE.md)** - 文本检索 CAD 模型
 - **[混合检索指南](docs/HYBRID_SEARCH_GUIDE.md)** - 多模态检索
-- **[可解释检索指南](docs/EXPLAINABLE_RETRIEVAL_GUIDE.md)** - 相似度分析
-- **[元数据数据库指南](docs/OCEANBASE_GUIDE.md)** - OceanBase 集成
+- **[可解释检索指南](docs/EXPLAINABLE_RETRIEVAL_GUIDE.md)** - 相似度分析基础
+- **[可解释检索增强](docs/EXPLAINABLE_RETRIEVAL_ENHANCEMENT.md)** - 5级评级+智能推荐+可视化
+- **[元数据数据库指南](docs/OCEANBASE_GUIDE.md)** - OceanBase/MySQL 集成与工具
 - **[批量检索指南](docs/BATCH_SEARCH_GUIDE.md)** - 高效批量查询
 
 ### 开发文档
@@ -456,6 +523,10 @@ MIT License - 详见 [LICENSE](LICENSE) 文件
 
 **⭐ 如果这个项目对你有帮助，欢迎 Star！**
 
-*最后更新：2025-01-25*
+*最后更新：2025-12-25*
 
-### 测试结果验证
+**最新更新：**
+- ✅ 可解释检索深度增强（5级评级、匹配类型、置信度、智能推荐）
+- ✅ 现代化可视化界面（渐变设计、动画效果、双语支持）
+- ✅ OceanBase数据库完整集成（导入工具、查询工具、命令行界面）
+- ✅ 特征向量深度分析（L2距离、余弦相似度、Top-K维度分析）
