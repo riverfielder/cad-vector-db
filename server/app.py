@@ -33,6 +33,8 @@ class SearchRequest(BaseModel):
     beta: float = 0.4
     # Hybrid search filters
     filters: Optional[Dict] = None  # {"subset": "0000", "min_seq_len": 10, "max_seq_len": 100}
+    # Explainable retrieval
+    explainable: bool = False  # Return detailed explanations for similarity scores
 
 
 class SearchResult(BaseModel):
@@ -68,9 +70,12 @@ async def root():
     }
 
 
-@app.post("/search", response_model=List[SearchResult])
+@app.post("/search")
 async def search(req: SearchRequest):
-    """Two-stage search with fusion and optional metadata filtering (Hybrid Search)"""
+    """Two-stage search with fusion and optional metadata filtering (Hybrid Search)
+    
+    With explainable=true, returns detailed similarity breakdown and interpretations
+    """
     if index is None:
         raise HTTPException(status_code=503, detail="Index not loaded")
     
@@ -88,7 +93,8 @@ async def search(req: SearchRequest):
             query_feat, req.query_file_path, index, ids, metadata,
             stage1_topn=req.stage1_topn, stage2_topk=req.k,
             fusion_method=req.fusion_method, alpha=req.alpha, beta=req.beta,
-            filters=req.filters  # Enable hybrid search
+            filters=req.filters,  # Enable hybrid search
+            explainable=req.explainable  # Enable explainable retrieval
         )
         
         return results
@@ -132,6 +138,46 @@ async def get_vector(vector_id: str):
             return meta
     
     raise HTTPException(status_code=404, detail=f"Vector not found: {vector_id}")
+
+
+@app.post("/search/visualize")
+async def search_and_visualize(req: SearchRequest):
+    """Search with explanations and generate HTML visualization"""
+    if index is None:
+        raise HTTPException(status_code=503, detail="Index not loaded")
+    
+    # Validate query file
+    if not os.path.exists(req.query_file_path):
+        raise HTTPException(status_code=404, detail=f"Query file not found: {req.query_file_path}")
+    
+    try:
+        # Force explainable mode
+        query_feat = load_macro_vec(req.query_file_path)
+        query_feat = extract_feature(query_feat)
+        
+        # Search with explanations
+        results = two_stage_search(
+            query_feat, req.query_file_path, index, ids, metadata,
+            stage1_topn=req.stage1_topn, stage2_topk=req.k,
+            fusion_method=req.fusion_method, alpha=req.alpha, beta=req.beta,
+            filters=req.filters,
+            explainable=True  # Force explainable mode
+        )
+        
+        # Generate HTML visualization
+        from scripts.visualize_explanation import generate_html_visualization
+        output_file = "explanation.html"
+        generate_html_visualization(results, req.query_file_path, output_file)
+        
+        return {
+            "status": "success",
+            "visualization_file": output_file,
+            "num_results": len(results),
+            "message": f"Visualization saved to {output_file}"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Visualization error: {str(e)}")
 
 
 if __name__ == "__main__":

@@ -11,18 +11,22 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import *
 
 
-def macro_distance(vec_a, vec_b, max_len=256):
+def macro_distance(vec_a, vec_b, max_len=256, return_details=False):
     """Calculate fine-grained distance between two macro vectors
     
     Args:
         vec_a, vec_b: (seq_len, 33) arrays
         max_len: max sequence length to compare
+        return_details: if True, return detailed breakdown
     
     Returns:
         distance: float, lower is more similar
+        details (optional): dict with breakdown if return_details=True
     """
     # Pad or truncate to same length
     L = min(vec_a.shape[0], vec_b.shape[0], max_len)
+    original_len_a = vec_a.shape[0]
+    original_len_b = vec_b.shape[0]
     
     if vec_a.shape[0] < L:
         pad_a = np.zeros((L - vec_a.shape[0], vec_a.shape[1]), dtype=vec_a.dtype)
@@ -37,13 +41,35 @@ def macro_distance(vec_a, vec_b, max_len=256):
         vec_b = vec_b[:L]
     
     # Command mismatch penalty (col 0)
-    cmd_penalty = np.sum(vec_a[:, 0] != vec_b[:, 0]).astype(float)
+    cmd_matches = np.sum(vec_a[:, 0] == vec_b[:, 0])
+    cmd_mismatches = L - cmd_matches
+    cmd_penalty = float(cmd_mismatches)
     
     # Parameter L2 distance (col 1-32)
-    param_l2 = np.linalg.norm(vec_a[:, 1:] - vec_b[:, 1:])
+    param_diff = vec_a[:, 1:] - vec_b[:, 1:]
+    param_l2 = np.linalg.norm(param_diff)
+    param_l2_per_step = np.linalg.norm(param_diff, axis=1)  # per-step distances
     
     # Normalize by sequence length
     distance = cmd_penalty + param_l2 / np.sqrt(L)
+    
+    if return_details:
+        details = {
+            'total_distance': float(distance),
+            'cmd_penalty': float(cmd_penalty),
+            'param_l2': float(param_l2),
+            'normalized_param_l2': float(param_l2 / np.sqrt(L)),
+            'sequence_length': int(L),
+            'query_seq_len': int(original_len_a),
+            'candidate_seq_len': int(original_len_b),
+            'cmd_matches': int(cmd_matches),
+            'cmd_mismatches': int(cmd_mismatches),
+            'cmd_match_rate': float(cmd_matches / L) if L > 0 else 0.0,
+            'avg_param_distance_per_step': float(np.mean(param_l2_per_step)),
+            'max_param_distance_per_step': float(np.max(param_l2_per_step)),
+            'step_distances': param_l2_per_step.tolist()
+        }
+        return distance, details
     
     return distance
 
@@ -53,6 +79,69 @@ def load_macro_vec(file_path):
     with h5py.File(file_path, 'r') as fp:
         vec = fp['vec'][:]
     return vec
+
+
+def explain_similarity_scores(stage1_sim, stage2_sim, fused_score, fusion_method, alpha=0.5, beta=0.5):
+    """Generate explanation for similarity scores
+    
+    Args:
+        stage1_sim: Stage 1 (ANN) similarity
+        stage2_sim: Stage 2 (rerank) similarity
+        fused_score: Final fused score
+        fusion_method: Fusion method used
+        alpha, beta: Fusion weights
+    
+    Returns:
+        explanation: dict with detailed breakdown
+    """
+    explanation = {
+        'stage1_similarity': float(stage1_sim),
+        'stage2_similarity': float(stage2_sim),
+        'final_score': float(fused_score),
+        'fusion_method': fusion_method
+    }
+    
+    if fusion_method == 'weighted':
+        contribution_stage1 = alpha * stage1_sim
+        contribution_stage2 = beta * stage2_sim
+        explanation['contributions'] = {
+            'stage1_weight': float(alpha),
+            'stage2_weight': float(beta),
+            'stage1_contribution': float(contribution_stage1),
+            'stage2_contribution': float(contribution_stage2),
+            'stage1_percentage': float(contribution_stage1 / fused_score * 100) if fused_score > 0 else 0,
+            'stage2_percentage': float(contribution_stage2 / fused_score * 100) if fused_score > 0 else 0
+        }
+    elif fusion_method == 'linear':
+        contribution_stage1 = 0.5 * stage1_sim
+        contribution_stage2 = 0.5 * stage2_sim
+        explanation['contributions'] = {
+            'stage1_contribution': float(contribution_stage1),
+            'stage2_contribution': float(contribution_stage2),
+            'stage1_percentage': 50.0,
+            'stage2_percentage': 50.0
+        }
+    
+    # Add interpretation
+    if stage1_sim > 0.9:
+        explanation['stage1_interpretation'] = 'Excellent feature-level match'
+    elif stage1_sim > 0.7:
+        explanation['stage1_interpretation'] = 'Good feature-level match'
+    elif stage1_sim > 0.5:
+        explanation['stage1_interpretation'] = 'Moderate feature-level match'
+    else:
+        explanation['stage1_interpretation'] = 'Weak feature-level match'
+    
+    if stage2_sim > 0.9:
+        explanation['stage2_interpretation'] = 'Excellent sequence-level match'
+    elif stage2_sim > 0.7:
+        explanation['stage2_interpretation'] = 'Good sequence-level match'
+    elif stage2_sim > 0.5:
+        explanation['stage2_interpretation'] = 'Moderate sequence-level match'
+    else:
+        explanation['stage2_interpretation'] = 'Weak sequence-level match'
+    
+    return explanation
 
 
 def minmax_normalize(scores):
@@ -90,7 +179,7 @@ def fusion_rrf(ranks_stage1, ranks_stage2, k=60):
 def two_stage_search(query_feat, query_file_path, index, ids, metadata, 
                       stage1_topn=100, stage2_topk=20, 
                       fusion_method="weighted", alpha=0.6, beta=0.4, rrf_k=60,
-                      filters=None):
+                      filters=None, explainable=False):
     """Two-stage retrieval with fusion and optional metadata filtering
     
     Args:
@@ -109,6 +198,7 @@ def two_stage_search(query_feat, query_file_path, index, ids, metadata,
             - min_seq_len: int
             - max_seq_len: int
             - label: str or list of str
+        explainable: if True, return detailed explanations for similarity scores
     
     Returns:
         results: list of dicts with {id, score, sim_stage1, sim_stage2, metadata}
@@ -160,6 +250,7 @@ def two_stage_search(query_feat, query_file_path, index, ids, metadata,
     query_vec = load_macro_vec(query_file_path)
     
     stage2_distances = []
+    stage2_details = []  # Store detailed breakdown for explainable mode
     for idx in I_stage1:
         cand_id = ids[idx]
         cand_meta = metadata[idx]
@@ -167,11 +258,18 @@ def two_stage_search(query_feat, query_file_path, index, ids, metadata,
         
         try:
             cand_vec = load_macro_vec(cand_file_path)
-            dist = macro_distance(query_vec, cand_vec)
-            stage2_distances.append(dist)
+            if explainable:
+                dist, details = macro_distance(query_vec, cand_vec, return_details=True)
+                stage2_distances.append(dist)
+                stage2_details.append(details)
+            else:
+                dist = macro_distance(query_vec, cand_vec)
+                stage2_distances.append(dist)
+                stage2_details.append(None)
         except Exception as e:
             print(f"Error reranking {cand_id}: {e}")
             stage2_distances.append(float('inf'))
+            stage2_details.append(None)
     
     stage2_distances = np.array(stage2_distances)
     
@@ -214,6 +312,21 @@ def two_stage_search(query_feat, query_file_path, index, ids, metadata,
             'sim_stage2': float(sim_stage2_norm[i]),
             'metadata': metadata[idx]
         }
+        
+        # Add explanation if requested
+        if explainable:
+            result['explanation'] = explain_similarity_scores(
+                sim_stage1_norm[i],
+                sim_stage2_norm[i],
+                fused_scores[i],
+                fusion_method,
+                alpha,
+                beta
+            )
+            
+            # Add stage 2 detailed breakdown
+            if stage2_details[i] is not None:
+                result['stage2_details'] = stage2_details[i]
         
         # Add filter match info if filters were applied
         if filters:
